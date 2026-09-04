@@ -63,7 +63,7 @@ ALLOWED_SERVICES = {
     "youtube", "github", "pinterest", "paypal", "booking", "tala", "olx",
     "stcpay", "unknown"
 }
-REFERRAL_REWARD = 0.10
+REFERRAL_REWARD = 0.001
 MIN_WITHDRAWAL = 1.0
 MAX_WITHDRAWAL = 5.0
 ADMIN_IDS = [ADMIN_ID, *EXTRA_ADMINS]
