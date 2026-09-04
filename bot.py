@@ -49,11 +49,11 @@ _admin_ids_raw = os.getenv("ADMIN_ID", "8921746989,8119221293")
 ADMIN_ID = int(_admin_ids_raw.split(",")[0].strip())
 EXTRA_ADMINS = [int(x.strip()) for x in _admin_ids_raw.split(",") if x.strip() and int(x.strip()) != ADMIN_ID]
 
-WSS_URL = "wss://ivasms.com:2087/livesms?token=eyJpdiI6InlUVmNva1RlSU8vMInZhbHVlIjoicDZMSXNxWmJGZC81Qy9BbzhBUVR3N0hLTXpiU0xXdDUrZXBmNjd0MmZsS295ZGZ4ay9qcktSQ1p4cDFZVlJTYlQ4dFFBcUo1TzZaMHdEUXZxVy8xTXFKQng4ekoyU0FzL2VkRkhDRkQ2Wkdxc0s2TmpoSi9acGlydi9sN0FhMVJISHQ3TUJOSXNFamNndTlrVWRMeFpLTU83VkZROEtLUGtQbld0aU5JcGRLQ2lPL3dHdzk1ZXlXc3pYMy84VkduU3Z1dmllSlBDQ3RKVElEc215QTBvRVkyVkVHclQ0Z3ExOFVWNFpkb3lMdWpHeDhWTG1yWllUbEgwemtQYTNyL2ROQmZuRlp3M1VDbjc3RWdNK1JKRU5abGRHNFR0d1VWZE13K2tOdjVxSEE0clpWbUxPZDFvaXdJUjhtS3AvTllKY2dDNCs3b0N6QWptck9zN3Z0MDFqaUh0bVFZOUNMdTNITEVKWnMwdHJ3aHc5V29HL2s5OGZqN3NINmg1VEpyTHQwdXllV1NXR2hDZzVKSXpIblJUcUFZVlZ0NDhTNm1aeEhscXlyVVZDRVNlRFQvUngxQmNTL0FiZCtUOVB4SllwVmc4RjBtUDZLZDBKblh6WERjVWFXdk91Vk1aNVJwcGVFTGhxN3QrWmF5VVNRSTZWUG1PTXowNEptTmk1bE16TGZtRWZPZGN6aGUxSk5MWUtsSzJnPT0iLCJtYWMiOiI5YzdiYTE3M2E3OTViMDlmMmU4Yjc1N2FlZmMwNmUzOWU5NDE1ZDIyMWY0Yzk4ZjgzNGU4MDU3Yjg2YzMxZjY3IiwidGFnIjoiIn0%3D&user=81d1d9839bdd2141f706d3cf6ee686ef"
+WSS_URL = "wss://ivas.qzz.io:2087/livesms?token=eyJpdiI6InlUVmNva1RlSU8vMInZhbHVlIjoicDZMSXNxWmJGZC81Qy9BbzhBUVR3N0hLTXpiU0xXdDUrZXBmNjd0MmZsS295ZGZ4ay9qcktSQ1p4cDFZVlJTYlQ4dFFBcUo1TzZaMHdEUXZxVy8xTXFKQng4ekoyU0FzL2VkRkhDRkQ2Wkdxc0s2TmpoSi9acGlydi9sN0FhMVJISHQ3TUJOSXNFamNndTlrVWRMeFpLTU83VkZROEtLUGtQbld0aU5JcGRLQ2lPL3dHdzk1ZXlXc3pYMy84VkduU3Z1dmllSlBDQ3RKVElEc215QTBvRVkyVkVHclQ0Z3ExOFVWNFpkb3lMdWpHeDhWTG1yWllUbEgwemtQYTNyL2ROQmZuRlp3M1VDbjc3RWdNK1JKRU5abGRHNFR0d1VWZE13K2tOdjVxSEE0clpWbUxPZDFvaXdJUjhtS3AvTllKY2dDNCs3b0N6QWptck9zN3Z0MDFqaUh0bVFZOUNMdTNITEVKWnMwdHJ3aHc5V29HL2s5OGZqN3NINmg1VEpyTHQwdXllV1NXR2hDZzVKSXpIblJUcUFZVlZ0NDhTNm1aeEhscXlyVVZDRVNlRFQvUngxQmNTL0FiZCtUOVB4SllwVmc4RjBtUDZLZDBKblh6WERjVWFXdk91Vk1aNVJwcGVFTGhxN3QrWmF5VVNRSTZWUG1PTXowNEptTmk1bE16TGZtRWZPZGN6aGUxSk5MWUtsSzJnPT0iLCJtYWMiOiI5YzdiYTE3M2E3OTViMDlmMmU4Yjc1N2FlZmMwNmUzOWU5NDE1ZDIyMWY0Yzk4ZjgzNGU4MDU3Yjg2YzMxZjY3IiwidGFnIjoiIn0%3D&user=81d1d9839bdd2141f706d3cf6ee686ef"
 WSS_HEADERS = {
-    "Origin": "https://ivasms.com",
+    "Origin": "https://ivas.qzz.io",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://www.ivasms.com/",
+    "Referer": "https://ivas.qzz.io/",
 }
 
 ALLOWED_SERVICES = {
@@ -191,7 +191,24 @@ def pe(name, fallback=None, emoji_id=None):
 def flag_icon_id(iso):
     return premium_icon(iso) or premium_icon("XX")
 
+# Custom admin-added apps use the FIRE premium emoji
+CUSTOM_APP_FALLBACK = "\U0001F525"
+
+def _is_custom_app(app_name):
+    """True for admin-added custom app names (no premium icon, not a known service)."""
+    n = str(app_name).strip().lower() if app_name else ""
+    if not n:
+        return False
+    if n in PREMIUM_ICONS or n in PREMIUM_EMOJI_IDS:
+        return False
+    if n in ALLOWED_SERVICES:
+        return False  # known/detectable services keep their normal icon
+    return True
+
 def app_icon_id(app_name):
+    if _is_custom_app(app_name):
+        # Custom app – fire premium emoji, fall back to the default app icon
+        return premium_icon("fire") or premium_icon("DEFAULT")
     return premium_icon(app_name) or premium_icon(app_name.lower()) or premium_icon("DEFAULT")
 
 def flag_emoji_html(iso):
@@ -202,15 +219,16 @@ def flag_emoji_html(iso):
     return "🌍"
 
 def app_emoji_html(app_name):
+    name_lower = str(app_name).lower() if app_name else ""
     eid = app_icon_id(app_name)
+    fb = {"whatsapp": "💬", "telegram": "✈️", "facebook": "📘", "tiktok": "🎵",
+          "google": "🔍", "instagram": "📸", "twitter": "🐦", "discord": "🎮",
+          "default": "📱"}.get(name_lower, "📱")
+    if _is_custom_app(app_name):
+        fb = CUSTOM_APP_FALLBACK
     if eid and PREMIUM_EMOJI_OK:
-        fb = {"whatsapp": "💬", "telegram": "✈️", "facebook": "📘", "tiktok": "🎵",
-              "google": "🔍", "instagram": "📸", "twitter": "🐦", "discord": "🎮",
-              "default": "📱"}.get(str(app_name).lower(), "📱")
         return f'<tg-emoji emoji-id="{eid}">{fb}</tg-emoji>'
-    return {"whatsapp": "💬", "telegram": "✈️", "facebook": "📘", "tiktok": "🎵",
-            "google": "🔍", "instagram": "📸", "twitter": "🐦", "discord": "🎮",
-            "default": "📱"}.get(str(app_name).lower() if app_name else "", "📱")
+    return fb
 
 # =========================== LIVE CHAT STEP HANDLERS ===========================
 # =========================== CUSTOM BUTTON HELPERS ===========================
@@ -540,6 +558,11 @@ def init_db():
         if "remove_cc" not in user_cols:
             c.execute("ALTER TABLE users ADD COLUMN remove_cc INTEGER DEFAULT 0")
 
+        # Add price_per_otp column to combos if missing (admin-adjustable per combo)
+        combo_cols = [r[1] for r in c.execute("PRAGMA table_info(combos)")]
+        if "price_per_otp" not in combo_cols:
+            c.execute("ALTER TABLE combos ADD COLUMN price_per_otp REAL DEFAULT NULL")
+
         # === Startup health check: verify all tables exist ===
         required_tables = [
             'users', 'combos', 'otp_logs', 'referrals', 'withdrawals',
@@ -702,6 +725,58 @@ def set_setting(key, value):
         conn.commit()
         conn.close()
     _persist_db()
+
+# =========================== OTP PRICING ===========================
+def get_default_otp_price():
+    """Global fallback price per OTP (defaults to the legacy $0.006)."""
+    try:
+        val = float(get_setting('price_per_otp') or 0.006)
+    except (TypeError, ValueError):
+        val = 0.006
+    return val
+
+def get_combo_otp_price(cc, combo_index):
+    """Price per OTP for a combo: combo override first, then global default."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT price_per_otp FROM combos WHERE country_code=? AND combo_index=?", (cc, combo_index))
+        row = c.fetchone()
+        conn.close()
+        if row and row[0] is not None:
+            return float(row[0])
+    except Exception as e:
+        logger.debug(f"get_combo_otp_price error: {e}")
+    return get_default_otp_price()
+
+def get_price_for_number(number):
+    """Price per OTP for the combo containing this number, else the global default."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT id, numbers, price_per_otp FROM combos")
+        target = clean_number(number)
+        for combo_id, nums_json, price in c.fetchall():
+            try:
+                if price is not None and target in (clean_number(n) for n in json.loads(nums_json)):
+                    conn.close()
+                    return float(price)
+            except Exception:
+                continue
+        conn.close()
+    except Exception as e:
+        logger.debug(f"get_price_for_number error: {e}")
+    return get_default_otp_price()
+
+def set_combo_otp_price(cc, combo_index, price):
+    """Set (or clear with price=None) the per-combo OTP price."""
+    with _db_lock:
+        conn = _get_conn()
+        c = conn.cursor()
+        c.execute("UPDATE combos SET price_per_otp=? WHERE country_code=? AND combo_index=?",
+                  (price, cc, combo_index))
+        conn.commit()
+        conn.close()
 
 def get_all_admins():
     conn = sqlite3.connect(DB_PATH)
@@ -1781,16 +1856,17 @@ def send_otp_to_user_and_group(date_str, number, sms, app_name=None):
         log_otp(number, otp, sms, user_id)
     except Exception as e:
         logger.error(f"log_otp failed: {e}")
-    # Credit user $0.006 per OTP received
+    # Credit user per OTP received (price is admin-adjustable per combo)
     new_balance = 0.0
     if user_id:
         try:
+            otp_price = get_price_for_number(number)
             u = get_user(user_id)
             if u:
                 cur_bal = u[10] if len(u) > 10 else 0.0
-                new_balance = cur_bal + 0.006
+                new_balance = cur_bal + otp_price
             else:
-                new_balance = 0.006
+                new_balance = otp_price
             # Use direct UPDATE to avoid overwriting other fields
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
@@ -2274,15 +2350,16 @@ class ChoiceSMSForwarder:
                             matched_user = get_user_by_number(phone_digits)
                             if matched_user:
                                 try:
-                                    # Credit first so balance shows in DM
+                                    # Credit first so balance shows in DM (admin-adjustable price)
                                     new_balance = 0.0
                                     try:
+                                        otp_price = get_price_for_number(phone_digits)
                                         u = get_user(matched_user)
                                         if u:
                                             cur_bal = u[10] if len(u) > 10 else 0.0
-                                            new_balance = cur_bal + 0.006
+                                            new_balance = cur_bal + otp_price
                                         else:
-                                            new_balance = 0.006
+                                            new_balance = otp_price
                                         _conn = sqlite3.connect(DB_PATH)
                                         _c = _conn.cursor()
                                         _c.execute("UPDATE users SET balance=? WHERE user_id=?", (new_balance, matched_user))
@@ -3479,11 +3556,12 @@ class SMSPanelForwarder:
                         matched_user = get_user_by_number(phone_digits)
                         if matched_user:
                             try:
+                                otp_price = get_price_for_number(phone_digits)
                                 new_balance = 0.0
                                 u = get_user(matched_user)
                                 if u:
                                     cur_bal = u[10] if len(u) > 10 else 0.0
-                                    new_balance = cur_bal + 0.006
+                                    new_balance = cur_bal + otp_price
                                 _conn = sqlite3.connect(DB_PATH)
                                 _c = _conn.cursor()
                                 _c.execute("UPDATE users SET balance=? WHERE user_id=?", (new_balance, matched_user))
@@ -4156,6 +4234,9 @@ def _dispatch_callback(call, data, chat_id, msg_id, user_id):
         if data.startswith("combo_app|"):
             combo_app_selection(call)
             return
+        if data == "combo_price_skip":
+            combo_price_skip_handler(call)
+            return
         handle_admin_callback(call, data, chat_id, msg_id)
     else:
         if data.startswith("copy_"):
@@ -4702,20 +4783,34 @@ def handle_admin_callback(call, data, chat_id, msg_id):
         name = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT app_name FROM combos WHERE country_code=? AND combo_index=?", (cc, ci))
+        c.execute("SELECT app_name, price_per_otp FROM combos WHERE country_code=? AND combo_index=?", (cc, ci))
         row = c.fetchone()
         app_name = row[0] if row else "WhatsApp"
+        combo_price = row[1] if row and len(row) > 1 else None
         conn.close()
         app_icon = app_emoji_html(app_name)
-        text = f"📞 <b>{flag_html} {name} ({app_icon} {app_name})</b>\nTotal: {len(nums)}\n\n"
+        price_txt = f"${combo_price:.4g}" if combo_price is not None else f"${get_default_otp_price():.4g} (default)"
+        text = f"📞 <b>{flag_html} {name} ({app_icon} {app_name})</b>\nTotal: {len(nums)}\n"
+        text += f"{pe('dollar', '💰')} Price per OTP: <b>{price_txt}</b>\n\n"
         for i, n in enumerate(nums[:20], 1):
             text += f"{i}. {n}\n"
         if len(nums) > 20:
             text += f"... and {len(nums)-20} more"
         markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn(f"{pe('dollar', '💰')} Adjust Price", callback_data=f"combo_set_price|{cc}|{ci}", style="primary", icon="pencil"))
         markup.add(ibtn("Delete Combo", callback_data=f"admin_del_combo|{cc}|{ci}", style="danger", icon="trash"))
         markup.add(ibtn("Back", callback_data="admin_combos", style="primary", icon="back"))
         bot.edit_message_text(text, chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
+        return
+
+    if data.startswith("combo_set_price|"):
+        _, cc, ci = data.split("|")
+        set_state(chat_id, {"step": "admin_combo_price", "price_cc": cc, "price_ci": int(ci)})
+        markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn("Cancel", callback_data=f"admin_view_combo|{cc}|{ci}", style="danger", icon="back"))
+        bot.edit_message_text(
+            f"{pe('dollar', '💰')} Send the new price per OTP in USD (e.g. <code>0.02</code>):",
+            chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
         return
 
     if data.startswith("admin_del_combo|"):
@@ -5199,6 +5294,7 @@ def handle_admin_callback(call, data, chat_id, msg_id):
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(ibtn("Cooldown", callback_data="admin_set_cooldown", style="primary", icon="wrench"))
         markup.add(ibtn("Num per Request", callback_data="admin_set_num_req", style="primary", icon="phone"))
+        markup.add(ibtn(f"Price per OTP [${get_default_otp_price():.4g}]", callback_data="admin_set_otp_price", style="primary", icon="dollar"))
         markup.add(ibtn("Support Link", callback_data="admin_set_support", style="primary", icon="support"))
         markup.add(ibtn("Watermark", callback_data="admin_set_watermark", style="primary", icon="star"))
         markup.add(ibtn("Bot Link", callback_data="admin_set_botlink", style="primary", icon="link"))
@@ -5208,6 +5304,17 @@ def handle_admin_callback(call, data, chat_id, msg_id):
         markup.add(ibtn("Maintenance", callback_data="admin_toggle_maintenance", style="danger", icon="wrench"))
         markup.add(ibtn("Back", callback_data="admin_panel", style="primary", icon="back"))
         bot.edit_message_text("⚙️ <b>Settings</b>", chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
+        return
+
+    if data == "admin_set_otp_price":
+        set_state(chat_id, "set_otp_price")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn("Cancel", callback_data="admin_settings", style="danger", icon="back"))
+        bot.edit_message_text(
+            f"{pe('dollar', '💰')} <b>Price per OTP</b>\n\n"
+            f"Current: <code>${get_default_otp_price():.4g}</code>\n"
+            f"Send the new default amount in USD (e.g. <code>0.01</code>):",
+            chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
         return
 
     if data == "admin_set_botlink":
@@ -5656,17 +5763,17 @@ def handle_combo_file(message):
         apps = ["WhatsApp", "Facebook", "Instagram", "Telegram", "Twitter", "Google", "TikTok", "Snapchat", "PayPal"]
         for app in apps:
             markup.add(ibtn(app, callback_data=f"combo_app|{app}", style="primary", icon_id=app_icon_id(app)))
+        markup.add(ibtn(f"{pe('fire', '🔥')} Custom App", callback_data="combo_app|__custom_app__", style="success", icon="plus"))
         markup.add(ibtn("Cancel", callback_data="admin_combos", style="danger", icon="back"))
         bot.reply_to(message, "Select the app for this combo:", parse_mode="HTML", reply_markup=markup)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}", parse_mode="HTML")
         clear_state(message)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("combo_app|") and is_admin(call.from_user.id))
 def combo_app_selection(call):
     app = call.data.split("|")[1]
-    state = user_states.get(call.from_user.id, {})
-    if not state or state.get("step") != "choose_app":
+    state = get_state(call.message)
+    if not isinstance(state, dict) or state.get("step") != "choose_app":
         bot.answer_callback_query(call.id, "❌ No pending combo.", show_alert=True)
         return
     cc = state.get("combo_country")
@@ -5674,16 +5781,178 @@ def combo_app_selection(call):
     if not cc or not lines:
         bot.answer_callback_query(call.id, "❌ Missing combo data.", show_alert=True)
         return
-    # Save with broadcast
+    iso = COUNTRY_CODES.get(cc, (cc, "UN"))[1]
+    flag_html = flag_emoji_html(iso)
+    name = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
+    if app == "__custom_app__":
+        set_state(call.message.chat.id, {
+            "step": "combo_custom_app",
+            "combo_country": cc,
+            "combo_numbers": lines,
+        })
+        app_icon = app_emoji_html("Custom")
+        text = (f"{app_icon} <b>CUSTOM APP</b>\n"
+                f"{flag_html} {name}\n\n"
+                f"{pe('fire', '🔥')} Send the app name now\n"
+                f"(it will be added with the FIRE premium emoji):")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn("Cancel", callback_data="admin_combos", style="danger", icon="back"))
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                  parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=markup)
+        return
+    # Known app selected – ask for the price per OTP before saving
+    set_state(call.message.chat.id, {
+        "step": "combo_price",
+        "combo_app": app,
+        "combo_country": cc,
+        "combo_numbers": lines,
+    })
+    app_icon = app_emoji_html(app)
+    cur_price = get_default_otp_price()
+    text = (f"{app_icon} <b>{app}</b>\n"
+            f"{flag_html} {name} – {len(lines)} numbers\n\n"
+            f"{pe('dollar', '💰')} <b>Price per OTP for this combo?</b>\n"
+            f"Send an amount in USD (e.g. <code>0.01</code>)\n"
+            f"Current default: <code>{cur_price}</code>")
+    markup = types.InlineKeyboardMarkup()
+    markup.add(ibtn("Skip (use default)", callback_data="combo_price_skip", style="primary", icon="free"))
+    markup.add(ibtn("Cancel", callback_data="admin_combos", style="danger", icon="back"))
+    try:
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                              parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        bot.send_message(call.message.chat.id, text, parse_mode="HTML", reply_markup=markup)
+
+
+# ---- Combo price step (asked after every txt upload) ----
+@bot.message_handler(func=lambda msg: isinstance(get_state(msg), dict) and get_state(msg).get("step") == "combo_price" and is_admin(msg.from_user.id))
+def combo_price_handler(message):
+    if message.text and message.text.strip().startswith("/"):
+        return
+    state = get_state(message)
+    app = state.get("combo_app", "WhatsApp")
+    cc = state.get("combo_country")
+    lines = state.get("combo_numbers")
+    if not cc or not lines:
+        clear_state(message)
+        return
+    try:
+        price = round(float(message.text.strip().replace("$", "")), 4)
+        if price < 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        bot.reply_to(message, f"{pe('cross', '❌')} Send a valid number, e.g. <code>0.01</code>", parse_mode="HTML")
+        return
+    _finalize_combo_upload(message, cc, lines, app, price)
+
+def combo_price_skip_handler(call):
+    state = get_state(call.message)
+    if not isinstance(state, dict) or state.get("step") != "combo_price":
+        bot.answer_callback_query(call.id, "Nothing pending.", show_alert=True)
+        return
+    app = state.get("combo_app", "WhatsApp")
+    cc = state.get("combo_country")
+    lines = state.get("combo_numbers")
+    if not cc or not lines:
+        bot.answer_callback_query(call.id, "❌ Missing combo data.", show_alert=True)
+        return
+    bot.answer_callback_query(call.id, "Using default price.")
+    _finalize_combo_upload_from_call(call, cc, lines, app, None)
+
+# ---- Custom app name step (admin types the app after uploading a txt) ----
+@bot.message_handler(func=lambda msg: isinstance(get_state(msg), dict) and get_state(msg).get("step") == "combo_custom_app" and is_admin(msg.from_user.id))
+def combo_custom_app_handler(message):
+    if message.text and message.text.strip().startswith("/"):
+        return
+    state = get_state(message)
+    cc = state.get("combo_country")
+    lines = state.get("combo_numbers")
+    if not cc or not lines:
+        clear_state(message)
+        return
+    app_name = message.text.strip()
+    if not app_name:
+        bot.reply_to(message, f"{pe('cross', '❌')} App name cannot be empty.", parse_mode="HTML")
+        return
+    if len(app_name) > 32:
+        bot.reply_to(message, f"{pe('cross', '❌')} Name too long (max 32 chars).", parse_mode="HTML")
+        return
+    app_icon = app_emoji_html(app_name)
+    set_state(message.chat.id, {
+        "step": "combo_price",
+        "combo_app": app_name,
+        "combo_country": cc,
+        "combo_numbers": lines,
+    })
+    iso = COUNTRY_CODES.get(cc, (cc, "UN"))[1]
+    flag_html = flag_emoji_html(iso)
+    name = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
+    cur_price = get_default_otp_price()
+    text = (f"{app_icon} <b>{html_mod.escape(app_name)}</b>\n"
+            f"{flag_html} {name} – {len(lines)} numbers\n\n"
+            f"{pe('dollar', '💰')} <b>Price per OTP for this combo?</b>\n"
+            f"Send an amount in USD (e.g. <code>0.01</code>)\n"
+            f"Current default: <code>{cur_price}</code>")
+    markup = types.InlineKeyboardMarkup()
+    markup.add(ibtn("Skip (use default)", callback_data="combo_price_skip", style="primary", icon="free"))
+    markup.add(ibtn("Cancel", callback_data="admin_combos", style="danger", icon="back"))
+    bot.send_message(message.chat.id, text, parse_mode="HTML", reply_markup=markup)
+
+# ---- Shared finalize helpers ----
+def _finalize_combo_upload(message, cc, lines, app, price):
     save_combo(cc, lines, app_name=app, broadcast=True)
+    if price is not None:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT MAX(combo_index) FROM combos WHERE country_code=?", (cc,))
+            max_index = c.fetchone()[0]
+            conn.close()
+            if max_index is not None:
+                set_combo_otp_price(cc, max_index, price)
+        except Exception as price_err:
+            logger.error(f"Failed to set combo price: {price_err}")
     iso = COUNTRY_CODES.get(cc, (cc, "UN"))[1]
     flag_html = flag_emoji_html(iso)
     name = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
     app_icon = app_emoji_html(app)
-    bot.edit_message_text(f"✅ Combo saved for {flag_html} {name} ({app_icon} {app}) – {len(lines)} numbers.",
-                          call.message.chat.id, call.message.message_id, parse_mode="HTML")
+    price_txt = f"${price:.4g}" if price is not None else f"${get_default_otp_price():.4g} (default)"
+    clear_state(message)
+    bot.send_message(message.chat.id,
+        f"{pe('checkmark', '✅')} Combo saved for {flag_html} {name} ({app_icon} {html_mod.escape(app)}) – {len(lines)} numbers.\n"
+        f"{pe('dollar', '💰')} Price per OTP: <b>{price_txt}</b>",
+        parse_mode="HTML")
+    show_admin_panel(message.chat.id)
+
+def _finalize_combo_upload_from_call(call, cc, lines, app, price):
+    save_combo(cc, lines, app_name=app, broadcast=True)
+    if price is not None:
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("SELECT MAX(combo_index) FROM combos WHERE country_code=?", (cc,))
+            max_index = c.fetchone()[0]
+            conn.close()
+            if max_index is not None:
+                set_combo_otp_price(cc, max_index, price)
+        except Exception as price_err:
+            logger.error(f"Failed to set combo price: {price_err}")
+    iso = COUNTRY_CODES.get(cc, (cc, "UN"))[1]
+    flag_html = flag_emoji_html(iso)
+    name = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
+    app_icon = app_emoji_html(app)
+    price_txt = f"${price:.4g}" if price is not None else f"${get_default_otp_price():.4g} (default)"
     clear_state(call.message)
-    handle_admin_callback(call, "admin_combos", call.message.chat.id, call.message.message_id)
+    try:
+        bot.edit_message_text(
+            f"{pe('checkmark', '✅')} Combo saved for {flag_html} {name} ({app_icon} {html_mod.escape(app)}) – {len(lines)} numbers.\n"
+            f"{pe('dollar', '💰')} Price per OTP: <b>{price_txt}</b>",
+            call.message.chat.id, call.message.message_id, parse_mode="HTML")
+    except Exception:
+        pass
 
 def admin_reject_reason_step(message):
     st = user_states.get(message.chat.id, {})
@@ -5953,6 +6222,26 @@ def admin_quick_deduct_handler(message):
         clear_state(message)
 
 
+@bot.message_handler(func=lambda msg: isinstance(get_state(msg), dict) and get_state(msg).get("step") == "admin_combo_price" and is_admin(msg.from_user.id))
+def admin_combo_price_handler(message):
+    if message.text and message.text.strip().startswith("/"):
+        return
+    state = get_state(message)
+    cc, ci = state.get("price_cc"), state.get("price_ci")
+    if not cc or not ci:
+        clear_state(message)
+        return
+    try:
+        val = round(float(message.text.strip().replace("$", "")), 4)
+        if val < 0:
+            raise ValueError
+        set_combo_otp_price(cc, ci, val)
+        bot.reply_to(message, f"{pe('checkmark', '✅')} Price per OTP set to ${val:.4g} for this combo.", parse_mode="HTML")
+    except (ValueError, TypeError):
+        bot.reply_to(message, "❌ Invalid number. Send an amount like <code>0.02</code>", parse_mode="HTML")
+        return
+    clear_state(message)
+
 @bot.message_handler(func=lambda msg: get_state(msg) == "add_balance" and is_admin(msg.from_user.id))
 def add_balance_handler(message):
     parts = message.text.strip().split()
@@ -6003,6 +6292,21 @@ def deduct_balance_handler(message):
             pass
     except:
         bot.reply_to(message, "❌ Invalid input.", parse_mode="HTML")
+    clear_state(message)
+
+@bot.message_handler(func=lambda msg: get_state(msg) == "set_otp_price" and is_admin(msg.from_user.id))
+def set_otp_price_handler(message):
+    if message.text and message.text.strip().startswith("/"):
+        return
+    try:
+        val = round(float(message.text.strip().replace("$", "")), 4)
+        if val < 0:
+            raise ValueError
+        set_setting('price_per_otp', str(val))
+        bot.reply_to(message, f"{pe('checkmark', '✅')} Price per OTP set to ${val:.4g}.", parse_mode="HTML")
+    except (ValueError, TypeError):
+        bot.reply_to(message, "❌ Invalid number. Send an amount like <code>0.01</code>", parse_mode="HTML")
+        return
     clear_state(message)
 
 @bot.message_handler(func=lambda msg: get_state(msg) == "set_botlink" and is_admin(msg.from_user.id))
