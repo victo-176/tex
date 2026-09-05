@@ -4307,6 +4307,7 @@ def _dispatch_callback(call, data, chat_id, msg_id, user_id):
         if data == "combo_app_custom":
             combo_app_custom_start(call, chat_id, msg_id)
             return
+        handle_admin_callback(call, data, chat_id, msg_id)
     else:
         if data.startswith("copy_"):
             otp = data.split("_", 1)[1]
