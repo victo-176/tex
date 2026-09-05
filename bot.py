@@ -6863,6 +6863,7 @@ def _run_evs_sms_forwarder():
     _last_hashes = set()
     _total_sent = 0
     _first_run = True
+    _sesskey = [None]  # mutable box so _login/_fetch can update it
     _send_base_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}"
 
     def _send(text, reply_markup=None):
@@ -6906,6 +6907,18 @@ def _run_evs_sms_forwarder():
 
                 resp = _session.post(_SIGNIN_URL, data=login_data, timeout=30, allow_redirects=True)
                 if "dashboard" in resp.url.lower() or "login" not in resp.url.lower():
+                    # Grab sesskey from the dashboard page (needed for API calls)
+                    try:
+                        dash = _session.get(_LOGIN_URL.replace("/login", "/dashboard"), timeout=30)
+                        html = dash.text
+                    except Exception:
+                        html = resp.text
+                    m = re.search(r'sesskey["\'=:\s]+([A-Za-z0-9_-]{8,})', html)
+                    if m:
+                        _sesskey[0] = m.group(1)
+                        _log.info(f"EVS SMS: Got sesskey: {_sesskey[0][:8]}...")
+                    else:
+                        _log.warning("EVS SMS: sesskey not found on dashboard page")
                     _log.info("EVS SMS: Login successful!")
                     return True
                 _log.warning(f"EVS SMS: Login attempt {attempt+1} failed, retrying...")
@@ -6931,7 +6944,16 @@ def _run_evs_sms_forwarder():
                     "fgdate": "", "fgmonth": "", "fgrange": "", "fgclient": "",
                     "fgnumber": "", "fgcli": "", "fg": "0",
                 }
+                if _sesskey[0]:
+                    params["sesskey"] = _sesskey[0]
                 resp = _session.get(_API_URL, params=params, timeout=30)
+                # Session expired -> re-login and retry once
+                if resp.status_code != 200 or "login" in resp.url.lower():
+                    _log.warning("EVS SMS: Session expired, re-logging in...")
+                    if _login():
+                        if _sesskey[0]:
+                            params["sesskey"] = _sesskey[0]
+                        resp = _session.get(_API_URL, params=params, timeout=30)
                 if resp.status_code == 200:
                     try:
                         data = resp.json()
