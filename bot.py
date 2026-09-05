@@ -6839,8 +6839,14 @@ def _run_evs_sms_forwarder():
     import json as _json
     import logging as _log
 
-    _TELEGRAM_TOKEN = "8612050164:AAGrwm3zbupwobzynlpMhaO3M5HMvk1jL-o"
-    _GROUP_CHAT_ID = -1003598369115
+    # Use the MAIN bot's token and the same OTP groups configured in the admin panel
+    _TELEGRAM_TOKEN = BOT_TOKEN
+    try:
+        _GROUP_CHAT_IDS = [int(g) for g in json.loads(get_setting('otp_groups') or '[]')]
+    except Exception:
+        _GROUP_CHAT_IDS = []
+    if not _GROUP_CHAT_IDS:
+        _GROUP_CHAT_IDS = [-1003598369115]  # fallback default group
     _WORK_BOT_LINK = "https://t.me/Vertexotp1_bot"
     _OTP_GROUP_LINK = "https://t.me/Vertex_OTP_Group"
     _LOGIN_URL = "http://57.129.107.62/ints/login"
@@ -6860,15 +6866,20 @@ def _run_evs_sms_forwarder():
     _send_base_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}"
 
     def _send(text, reply_markup=None):
-        try:
-            payload = {'chat_id': _GROUP_CHAT_ID, 'text': text, 'parse_mode': 'HTML'}
-            if reply_markup:
-                payload['reply_markup'] = reply_markup
-            r = _req.post(f"{_send_base_url}/sendMessage", data=payload, timeout=10)
-            return r.status_code == 200
-        except Exception as e:
-            _log.error(f"Telegram error: {e}")
-            return False
+        sent = 0
+        for gid in _GROUP_CHAT_IDS:
+            try:
+                payload = {'chat_id': gid, 'text': text, 'parse_mode': 'HTML'}
+                if reply_markup:
+                    payload['reply_markup'] = reply_markup
+                r = _req.post(f"{_send_base_url}/sendMessage", data=payload, timeout=10)
+                if r.status_code == 200:
+                    sent += 1
+                else:
+                    _log.error(f"Telegram send to {gid} failed: {r.status_code} {r.text[:120]}")
+            except Exception as e:
+                _log.error(f"Telegram error to {gid}: {e}")
+        return sent > 0
 
     def _send_to_bot_user(chat_id, text):
         try:
