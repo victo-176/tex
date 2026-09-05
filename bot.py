@@ -67,6 +67,14 @@ REFERRAL_REWARD = 0.001
 MIN_WITHDRAWAL = 1.0
 MAX_WITHDRAWAL = 5.0
 ADMIN_IDS = [ADMIN_ID, *EXTRA_ADMINS]
+# Default price credited to users per OTP received (admin-adjustable via Settings)
+DEFAULT_OTP_PRICE = float(os.getenv("OTP_PRICE", "0.006"))
+# Default price charged to users when fetching a number (0 = free)
+DEFAULT_NUMBER_PRICE = float(os.getenv("NUMBER_PRICE", "0.0"))
+# Premium fire emoji ID used for custom apps added by the admin
+CUSTOM_APP_EMOJI_ID = "5424972470023104089"  # fire
+# Apps always shown in the combo upload picker (everything else counts as custom)
+BUILTIN_COMBO_APPS = ["WhatsApp", "Facebook", "Instagram", "Telegram", "Twitter", "Google", "TikTok", "Snapchat", "PayPal"]
 # ======================== PERSISTENT STORAGE ========================
 PERSISTENT_DIR = os.environ.get("PERSISTENT_DIR", "/app/data/")
 os.makedirs(PERSISTENT_DIR, exist_ok=True)
@@ -211,6 +219,37 @@ def app_icon_id(app_name):
         return premium_icon("fire") or premium_icon("DEFAULT")
     return premium_icon(app_name) or premium_icon(app_name.lower()) or premium_icon("DEFAULT")
 
+def custom_app_emoji_html(app_name):
+    """Return the fire premium emoji tag for a custom (admin-added) app."""
+    fb = "🔥"
+    if PREMIUM_EMOJI_OK and CUSTOM_APP_EMOJI_ID:
+        return f'<tg-emoji emoji-id="{CUSTOM_APP_EMOJI_ID}">{fb}</tg-emoji>'
+    return fb
+
+def get_custom_apps():
+    """Return the list of custom app names added by admins."""
+    try:
+        return json.loads(get_setting('custom_apps') or '[]')
+    except Exception:
+        return []
+
+def add_custom_app(app_name):
+    """Register a custom app name (idempotent, case-insensitive)."""
+    name = str(app_name).strip()
+    if not name:
+        return False
+    apps = get_custom_apps()
+    if not any(a.lower() == name.lower() for a in apps):
+        apps.append(name)
+        set_setting('custom_apps', json.dumps(apps))
+    return True
+
+def remove_custom_app(app_name):
+    apps = get_custom_apps()
+    new_apps = [a for a in apps if a.lower() != str(app_name).lower()]
+    set_setting('custom_apps', json.dumps(new_apps))
+    return len(apps) != len(new_apps)
+
 def flag_emoji_html(iso):
     """Return unicode flag emoji for the country ISO code."""
     if iso and len(str(iso)) == 2:
@@ -220,6 +259,9 @@ def flag_emoji_html(iso):
 
 def app_emoji_html(app_name):
     name_lower = str(app_name).lower() if app_name else ""
+    # Custom (admin-added) apps always use the fire premium emoji
+    if app_name and name_lower in {a.lower() for a in get_custom_apps()}:
+        return custom_app_emoji_html(app_name)
     eid = app_icon_id(app_name)
     fb = {"whatsapp": "💬", "telegram": "✈️", "facebook": "📘", "tiktok": "🎵",
           "google": "🔍", "instagram": "📸", "twitter": "🐦", "discord": "🎮",
@@ -524,6 +566,7 @@ def init_db():
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('cooldown', '1')")
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('num_per_request', '1')")
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('maintenance', '0')")
+        c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('otp_price', ?)", (str(DEFAULT_OTP_PRICE),))
         # Ensure no duplicate numbers across users (migration for existing DBs)
         try:
             c.execute("SELECT user_id, assigned_number FROM users WHERE assigned_number IS NOT NULL AND assigned_number != ''")
@@ -777,6 +820,31 @@ def set_combo_otp_price(cc, combo_index, price):
                   (price, cc, combo_index))
         conn.commit()
         conn.close()
+
+def get_otp_price(app_name=None):
+    """Price per OTP. Falls back: per-app price -> global price -> DEFAULT_OTP_PRICE."""
+    if app_name:
+        key = 'otp_price_app_' + re.sub(r'[^a-z0-9_]', '_', str(app_name).lower())
+        v = get_setting(key)
+        if v:
+            try:
+                return float(v)
+            except ValueError:
+                pass
+    v = get_setting('otp_price')
+    if v:
+        try:
+            return float(v)
+        except ValueError:
+            pass
+    return DEFAULT_OTP_PRICE
+
+def set_otp_price(value, app_name=None):
+    if app_name:
+        key = 'otp_price_app_' + re.sub(r'[^a-z0-9_]', '_', str(app_name).lower())
+        set_setting(key, str(value))
+    else:
+        set_setting('otp_price', str(value))
 
 def get_all_admins():
     conn = sqlite3.connect(DB_PATH)
@@ -1857,7 +1925,6 @@ def send_otp_to_user_and_group(date_str, number, sms, app_name=None):
     except Exception as e:
         logger.error(f"log_otp failed: {e}")
     # Credit user per OTP received (price is admin-adjustable per combo)
-    new_balance = 0.0
     if user_id:
         try:
             otp_price = get_price_for_number(number)
@@ -4237,7 +4304,9 @@ def _dispatch_callback(call, data, chat_id, msg_id, user_id):
         if data == "combo_price_skip":
             combo_price_skip_handler(call)
             return
-        handle_admin_callback(call, data, chat_id, msg_id)
+        if data == "combo_app_custom":
+            combo_app_custom_start(call, chat_id, msg_id)
+            return
     else:
         if data.startswith("copy_"):
             otp = data.split("_", 1)[1]
@@ -5293,6 +5362,7 @@ def handle_admin_callback(call, data, chat_id, msg_id):
         rt_style = "success" if rt_otp else "danger"
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(ibtn("Cooldown", callback_data="admin_set_cooldown", style="primary", icon="wrench"))
+        markup.add(ibtn("Price per OTP", callback_data="admin_set_otp_price", style="primary", icon="dollar"))
         markup.add(ibtn("Num per Request", callback_data="admin_set_num_req", style="primary", icon="phone"))
         markup.add(ibtn(f"Price per OTP [${get_default_otp_price():.4g}]", callback_data="admin_set_otp_price", style="primary", icon="dollar"))
         markup.add(ibtn("Support Link", callback_data="admin_set_support", style="primary", icon="support"))
@@ -5322,6 +5392,14 @@ def handle_admin_callback(call, data, chat_id, msg_id):
         markup = types.InlineKeyboardMarkup()
         markup.add(ibtn("Cancel", callback_data="admin_settings", style="danger", icon="back"))
         bot.edit_message_text("Send the bot link (e.g., https://t.me/YourBot):", chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
+        return
+
+    if data == "admin_set_otp_price":
+        price = get_otp_price()
+        set_state(chat_id, "set_otp_price")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn("Cancel", callback_data="admin_settings", style="danger", icon="back"))
+        bot.edit_message_text(f"Send the new price per OTP (current: ${price:.4f}):", chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
         return
 
     if data == "admin_set_cooldown":
@@ -5760,12 +5838,20 @@ def handle_combo_file(message):
             return
         set_state(message.chat.id, {"combo_country": cc, "combo_numbers": lines, "step": "choose_app"})
         markup = types.InlineKeyboardMarkup(row_width=2)
-        apps = ["WhatsApp", "Facebook", "Instagram", "Telegram", "Twitter", "Google", "TikTok", "Snapchat", "PayPal"]
-        for app in apps:
+        for app in BUILTIN_COMBO_APPS:
             markup.add(ibtn(app, callback_data=f"combo_app|{app}", style="primary", icon_id=app_icon_id(app)))
-        markup.add(ibtn(f"{pe('fire', '🔥')} Custom App", callback_data="combo_app|__custom_app__", style="success", icon="plus"))
-        markup.add(ibtn("Cancel", callback_data="admin_combos", style="danger", icon="back"))
-        bot.reply_to(message, "Select the app for this combo:", parse_mode="HTML", reply_markup=markup)
+        builtin_lower = {a.lower() for a in BUILTIN_COMBO_APPS}
+        for custom in get_custom_apps():
+            if custom.lower() in builtin_lower:
+                continue
+            markup.add(ibtn(f"🔥 {custom}", callback_data=f"combo_app|{custom}", style="success", icon_id=CUSTOM_APP_EMOJI_ID))
+        markup.add(ibtn("🔥 Custom App", callback_data="combo_app_custom", style="success", icon_id=CUSTOM_APP_EMOJI_ID))
+        price = get_otp_price()
+        bot.reply_to(message,
+            f"Select the app for this combo:\n\n"
+            f"{pe('dollar', '💰')} <b>Price per OTP:</b> ${price:.4f}\n"
+            f"<i>You can set a different price after choosing the app.</i>",
+            parse_mode="HTML", reply_markup=markup)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}", parse_mode="HTML")
         clear_state(message)
@@ -5940,7 +6026,9 @@ def _finalize_combo_upload_from_call(call, cc, lines, app, price):
                 set_combo_otp_price(cc, max_index, price)
         except Exception as price_err:
             logger.error(f"Failed to set combo price: {price_err}")
-    iso = COUNTRY_CODES.get(cc, (cc, "UN"))[1]
+    # Register genuinely custom apps so users can select them (uses fire premium emoji)
+    if not any(app.lower() == b.lower() for b in BUILTIN_COMBO_APPS):
+        add_custom_app(app)
     flag_html = flag_emoji_html(iso)
     name = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
     app_icon = app_emoji_html(app)
@@ -5953,6 +6041,71 @@ def _finalize_combo_upload_from_call(call, cc, lines, app, price):
             call.message.chat.id, call.message.message_id, parse_mode="HTML")
     except Exception:
         pass
+def combo_app_custom_start(call, chat_id, msg_id):
+    st = get_state(call.message)
+    if not isinstance(st, dict) or st.get("step") != "choose_app":
+        bot.answer_callback_query(call.id, "❌ No pending combo.", show_alert=True)
+        return
+    st["step"] = "combo_custom_app"
+    set_state(chat_id, st)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(ibtn("Cancel", callback_data="admin_combos", style="danger", icon="back"))
+    bot.edit_message_text(
+        f"{custom_app_emoji_html('Custom')} <b>Send the name of the custom app</b> (e.g. Binance):",
+        chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
+
+@bot.message_handler(func=lambda msg: isinstance(get_state(msg), dict) and get_state(msg).get("step") == "combo_set_price" and is_admin(msg.from_user.id))
+def combo_price_handler(message):
+    st = get_state(message)
+    app = st.get("combo_price_app", "") if isinstance(st, dict) else ""
+    try:
+        price = float(message.text.strip().replace("$", "").replace(",", "."))
+        if price < 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        bot.reply_to(message, "❌ Send a valid price (e.g. 0.01)", parse_mode="HTML")
+        return
+    set_otp_price(price, app_name=app or None)
+    clear_state(message)
+    app_icon = app_emoji_html(app) if app else ""
+    bot.reply_to(message,
+        f"{pe('checkmark', '✅')} <b>Price updated!</b>\n"
+        f"{app_icon} <b>{app or 'Global'}</b> price per OTP: <b>${price:.4f}</b>",
+        parse_mode="HTML")
+    show_admin_panel(message.chat.id)
+
+@bot.message_handler(func=lambda msg: isinstance(get_state(msg), dict) and get_state(msg).get("step") == "combo_custom_app" and is_admin(msg.from_user.id))
+def combo_custom_app_handler(message):
+    if not message.text:
+        bot.reply_to(message, "\u274C Send the app name as text:", parse_mode="HTML")
+        return
+    name = message.text.strip()
+    if not name or len(name) > 32:
+        bot.reply_to(message, "❌ Send a valid app name (max 32 characters):", parse_mode="HTML")
+        return
+    st = get_state(message)
+    add_custom_app(name)
+    if isinstance(st, dict) and st.get("combo_country") and st.get("combo_numbers"):
+        save_combo(st["combo_country"], st["combo_numbers"], app_name=name, broadcast=True)
+        cc = st["combo_country"]
+        lines = st["combo_numbers"]
+        iso = COUNTRY_CODES.get(cc, (cc, "UN"))[1]
+        flag_html = flag_emoji_html(iso)
+        cname = COUNTRY_CODES.get(cc, (cc, "UN"))[0]
+        price = get_otp_price(name)
+        set_state(message.chat.id, {"combo_price_app": name, "step": "combo_set_price"})
+        markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn(f"Use current (${price:.4f})", callback_data="combo_price_skip", style="primary", icon="dollar"))
+        bot.reply_to(message,
+            f"{custom_app_emoji_html(name)} <b>Custom app added!</b>\n\n"
+            f"✅ Combo saved for {flag_html} {cname} ({custom_app_emoji_html(name)} {name}) – {len(lines)} numbers.\n\n"
+            f"{pe('dollar', '💰')} <b>Set the price per OTP</b> for <b>{name}</b>:\n"
+            f"Send the new price (e.g. <code>0.01</code>) or keep the current one.",
+            parse_mode="HTML", reply_markup=markup)
+    else:
+        clear_state(message)
+        bot.reply_to(message, f"{custom_app_emoji_html(name)} <b>Custom app added:</b> {name}", parse_mode="HTML")
+        show_admin_panel(message.chat.id)
 
 def admin_reject_reason_step(message):
     st = user_states.get(message.chat.id, {})
@@ -6316,6 +6469,18 @@ def set_botlink_handler(message):
     bot.reply_to(message, f"✅ Bot link set to: {link}", parse_mode="HTML")
     clear_state(message)
 
+
+@bot.message_handler(func=lambda msg: get_state(msg) == "set_otp_price" and is_admin(msg.from_user.id))
+def set_otp_price_handler(message):
+    try:
+        val = float(message.text.strip().replace("$", "").replace(",", "."))
+        if val < 0:
+            raise ValueError
+        set_otp_price(val)
+        bot.reply_to(message, f"✅ Price per OTP set to ${val:.4f}.", parse_mode="HTML")
+    except (ValueError, AttributeError):
+        bot.reply_to(message, "❌ Invalid price. Send a number (e.g. 0.01).", parse_mode="HTML")
+    clear_state(message)
 
 @bot.message_handler(func=lambda msg: get_state(msg) == "set_cooldown" and is_admin(msg.from_user.id))
 def set_cooldown_handler(message):
