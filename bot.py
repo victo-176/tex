@@ -6868,6 +6868,9 @@ def _run_evs_sms_forwarder():
 🤖 <a href="{_WORK_BOT_LINK}">Work Bot</a> | 📢 <a href="{_OTP_GROUP_LINK}">OTP Group</a>"""
             _send_to_bot_user(user_id, bot_msg)
 
+        # Always send a copy to the bot user (admin) so bot DM gets OTPs too
+        _send_to_bot_user(ADMIN_ID, bot_msg)
+
         return sent_grp
 
     def _main_loop():
