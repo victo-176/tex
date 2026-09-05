@@ -6650,6 +6650,7 @@ def main():
         logger.error(f"Failed to start panel forwarders: {e}")
     logger.info("Forwarders started (IVASMS + Choice SMS + Panels + cleanup)")
     logger.info("Bot polling started.")
+    time.sleep(3)
     bot.infinity_polling()
 
 if __name__ == "__main__":
