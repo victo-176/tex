@@ -23,8 +23,22 @@ from bs4 import BeautifulSoup
 PANEL_NAME = "EVS SMS"
 DEFAULT_LOGIN_TYPE = "agent"
 
-DB_PATH = os.environ.get("DB_PATH", "data/ivasms_bot.db")
+# Use the SAME database as the main bot so settings (bot token, groups) are shared.
+def _resolve_db_path():
+    env = os.environ.get("DB_PATH")
+    if env:
+        return env
+    for candidate in ("/app/data/bot.db", "data/bot.db", "data/ivasms_bot.db"):
+        if os.path.isfile(candidate):
+            return candidate
+    return "/app/data/bot.db"
+
+DB_PATH = _resolve_db_path()
 POLL_INTERVAL = 15
+
+# Defaults matching the main bot (bot.py)
+DEFAULT_BOT_TOKEN = "8627490245:AAG2ZDkooVO43C5WPmJiFkDmY5ks9g29aMQ"
+DEFAULT_GROUP_ID = "-1003598369115"
 
 # =========================== DATABASE HELPERS ===========================
 def _db():
@@ -43,16 +57,24 @@ def get_setting(key, default=None):
 
 
 def get_bot_token():
+    """Use the same bot token as the main bot: env var -> DB setting -> main bot default."""
     t = os.environ.get("BOT_TOKEN")
-    return t if t else get_setting("bot_token")
+    if t:
+        return t
+    t = get_setting("bot_token")
+    return t if t else DEFAULT_BOT_TOKEN
 
 
 def get_otp_groups():
+    """Use the same OTP groups as the main bot; fall back to the default group."""
     raw = get_setting("otp_groups", "[]")
     try:
-        return [int(g) for g in json.loads(raw)]
+        groups = [int(g) for g in json.loads(raw)]
     except Exception:
-        return []
+        groups = []
+    if not groups:
+        groups = [int(DEFAULT_GROUP_ID)]
+    return groups
 
 
 def get_bot_link():
@@ -81,10 +103,6 @@ BOT_LINK = get_bot_link()
 PANEL = get_panel_credentials(PANEL_NAME)
 
 errors = []
-if not BOT_TOKEN:
-    errors.append("BOT_TOKEN missing — set via bot admin or env var")
-if not OTP_GROUPS:
-    errors.append("No OTP groups — add via bot admin > OTP Groups")
 if not PANEL:
     errors.append(f"Panel '{PANEL_NAME}' not found in database — add via bot admin > SMS Panels")
 else:
