@@ -40,6 +40,11 @@ POLL_INTERVAL = 15
 DEFAULT_BOT_TOKEN = "8627490245:AAG2ZDkooVO43C5WPmJiFkDmY5ks9g29aMQ"
 DEFAULT_GROUP_ID = "-1003598369115"
 
+# Built-in EVS panel credentials (fallback if not configured in DB)
+DEFAULT_PANEL_URL = "http://57.129.107.62/ints"
+DEFAULT_USERNAME = "Mustapha"
+DEFAULT_PASSWORD = "@Mm64500589"
+
 # =========================== DATABASE HELPERS ===========================
 def _db():
     conn = sqlite3.connect(DB_PATH)
@@ -102,33 +107,22 @@ OTP_GROUPS = get_otp_groups()
 BOT_LINK = get_bot_link()
 PANEL = get_panel_credentials(PANEL_NAME)
 
-errors = []
 if not PANEL:
-    errors.append(f"Panel '{PANEL_NAME}' not found in database — add via bot admin > SMS Panels")
+    # Fall back to the built-in EVS credentials so the script always works
+    PANEL = {"url": DEFAULT_PANEL_URL, "username": DEFAULT_USERNAME, "password": DEFAULT_PASSWORD, "login_type": None}
 else:
     if not PANEL.get("url"):
-        errors.append("Panel URL is empty")
+        PANEL["url"] = DEFAULT_PANEL_URL
     if not PANEL.get("username"):
-        errors.append("Panel username is empty")
+        PANEL["username"] = DEFAULT_USERNAME
     if not PANEL.get("password"):
-        errors.append("Panel password is empty")
-
-if errors:
-    print("=" * 50)
-    print(f"  {PANEL_NAME} — CONFIGURATION ERRORS")
-    print("=" * 50)
-    for i, e in enumerate(errors, 1):
-        print(f"  {i}. {e}")
-    print()
-    print("  FIX: Bot > /start > Admin > SMS Panels")
-    print("=" * 50)
-    sys.exit(1)
+        PANEL["password"] = DEFAULT_PASSWORD
 
 # =========================== EXTRACTED CONFIG ===========================
-PANEL_URL = PANEL["url"].rstrip("/")
+PANEL_URL = (PANEL.get("url") or DEFAULT_PANEL_URL).rstrip("/")
 LOGIN_TYPE = PANEL.get("login_type") or DEFAULT_LOGIN_TYPE
-USERNAME = PANEL["username"]
-PASSWORD = PANEL["password"]
+USERNAME = PANEL.get("username") or DEFAULT_USERNAME
+PASSWORD = PANEL.get("password") or DEFAULT_PASSWORD
 
 API_PATHS = [
     f"{LOGIN_TYPE}/res/data_smscdr.php",
@@ -149,9 +143,36 @@ session.headers.update({
     "Accept": "application/json, text/javascript, */*",
 })
 
+sesskey = [None]
 last_sms_hashes = set()
 total_otps_sent = 0
 first_run = True
+
+# Admin chat IDs for DM copies (setting admin_ids or env ADMIN_ID, comma-separated)
+def get_admin_ids():
+    raw = get_setting("admin_ids") or os.environ.get("ADMIN_ID", "8921746989,8119221293")
+    try:
+        return [int(a) for a in str(raw).replace(" ", "").split(",") if a]
+    except Exception:
+        return []
+
+ADMIN_IDS = get_admin_ids()
+
+
+def send_to_admins(text):
+    sent = 0
+    for aid in ADMIN_IDS:
+        try:
+            r = requests.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"chat_id": aid, "text": text, "parse_mode": "HTML"},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                sent += 1
+        except Exception as exc:
+            logger.error(f"Telegram error to admin {aid}: {exc}")
+    return sent > 0
 
 # =========================== COUNTRY FLAGS ===========================
 COUNTRY_FLAGS = {
@@ -260,6 +281,16 @@ def login():
             logger.info(f"Captcha: {nums[0][0]} + {nums[0][1]} = {data['capt']}")
         resp = session.post(SIGNIN_URL, data=data, timeout=30, allow_redirects=True)
         if "dashboard" in resp.url.lower() or "signin" not in resp.url.lower():
+            # Grab sesskey from the dashboard page (needed for API calls)
+            try:
+                dash = session.get(f"{PANEL_URL}/dashboard", timeout=30)
+                html = dash.text
+            except Exception:
+                html = resp.text
+            m = re.search(r'sesskey["\'=:\s]+([A-Za-z0-9_-]{8,})', html)
+            if m:
+                sesskey[0] = m.group(1)
+                logger.info(f"Got sesskey: {sesskey[0][:8]}...")
             logger.info("Login successful!")
             return True
         logger.warning(f"Login failed ({resp.url[:80]})")
@@ -284,9 +315,18 @@ def fetch_otps():
             "fgdate": "", "fgmonth": "", "fgrange": "", "fgclient": "",
             "fgnumber": "", "fgcli": "", "fg": "0",
         }
+        if sesskey[0]:
+            params["sesskey"] = sesskey[0]
         for path in API_PATHS:
             try:
                 resp = session.get(f"{PANEL_URL}/{path}", params=params, timeout=30)
+                # Session expired -> re-login and retry once
+                if resp.status_code != 200 or "login" in resp.url.lower():
+                    logger.warning("Session expired, re-logging in...")
+                    if login():
+                        if sesskey[0]:
+                            params["sesskey"] = sesskey[0]
+                        resp = session.get(f"{PANEL_URL}/{path}", params=params, timeout=30)
                 if resp.status_code != 200:
                     continue
                 data = resp.json()
@@ -333,11 +373,23 @@ def main():
     print(f"  Groups: {len(OTP_GROUPS)}")
     print("=" * 50)
 
-    if not login():
-        logger.error("Login failed! Check credentials in bot admin panel.")
-        return
+    # Retry login forever so a temporary panel outage doesn't kill the script
+    while not login():
+        logger.error("Login failed! Retrying in 30s...")
+        time.sleep(30)
 
-    send_to_groups(f"\U0001f7e2 {PANEL_NAME} Started!")
+    # Startup message: Bot online + test OTP
+    send_to_groups(f"🟢 <b>Bot online</b> — {PANEL_NAME} is up and monitoring OTPs.")
+    send_to_admins(f"🟢 <b>Bot online</b> — {PANEL_NAME} started successfully.")
+    test_msg = (
+        "🔥 <b>TEST OTP</b> — EVS connection works!\n"
+        "📱 Number: +0000000000\n"
+        "🔑 OTP: <code>123456</code>\n"
+        "✅ This is a test message to confirm the forwarder is working."
+    )
+    send_to_groups(test_msg)
+    send_to_admins(test_msg)
+    logger.info("Sent startup + test messages")
     logger.info("Monitoring OTPs...")
 
     while True:
