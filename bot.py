@@ -6785,53 +6785,6 @@ def send_otp_to_admin(timestamp, number, otp, service="", country="", full_msg="
         except:
             pass
 
-# =========================== MAIN ===========================
-def periodic_cleanup():
-    """Background thread that cleans up old seen_otps every 6 hours."""
-    while True:
-        try:
-            time.sleep(6 * 3600)  # 6 hours
-            cleanup_old_seen_otps(days=7)
-            count = seen_otps_count()
-            logger.info(f"Periodic cleanup done. seen_otps table: {count} entries")
-        except Exception as e:
-            logger.error(f"Periodic cleanup error: {e}")
-
-def main():
-    # Log DB status on startup
-    try:
-        otp_count = get_total_otp_count()
-        seen_count = seen_otps_count()
-        logger.info(f"Startup DB status: {otp_count} OTP logs, {seen_count} seen hashes in DB")
-    except Exception as e:
-        logger.warning(f"Startup DB check failed: {e}")
-
-    threading.Thread(target=monitor_loop, daemon=True).start()
-    threading.Thread(target=start_choice_sms, daemon=True).start()
-    # Start EVS SMS forwarder on boot (same as Choice SMS)
-    threading.Thread(target=_run_evs_sms_forwarder, daemon=True).start()
-    threading.Thread(target=periodic_cleanup, daemon=True).start()
-    # Start forwarders for all admin-added SMS panels
-    try:
-        start_all_panel_forwarders()
-    except Exception as e:
-        logger.error(f"Failed to start panel forwarders: {e}")
-    logger.info("Forwarders started (IVASMS + Choice SMS + EVS + Panels + cleanup)")
-    logger.info("Bot polling started.")
-    time.sleep(3)
-    bot.infinity_polling()
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("Bot stopped.")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        traceback.print_exc()
-        sys.exit(1)
-
 # ==================== EVS SMS FORWARDER (start after 3s) ====================
 def _run_evs_sms_forwarder():
     import threading
@@ -7108,6 +7061,50 @@ def _run_evs_sms_forwarder():
     else:
         _log.error("EVS SMS: Could not login - exiting forwarder thread")
 
-# Start EVS SMS forwarder in background after 3s before bot polling
-logging.info("Starting EVS SMS forwarder in background after 3s...")
-threading.Thread(target=_run_evs_sms_forwarder, daemon=True).start()
+
+# =========================== MAIN ===========================
+def periodic_cleanup():
+    """Background thread that cleans up old seen_otps every 6 hours."""
+    while True:
+        try:
+            time.sleep(6 * 3600)  # 6 hours
+            cleanup_old_seen_otps(days=7)
+            count = seen_otps_count()
+            logger.info(f"Periodic cleanup done. seen_otps table: {count} entries")
+        except Exception as e:
+            logger.error(f"Periodic cleanup error: {e}")
+
+def main():
+    # Log DB status on startup
+    try:
+        otp_count = get_total_otp_count()
+        seen_count = seen_otps_count()
+        logger.info(f"Startup DB status: {otp_count} OTP logs, {seen_count} seen hashes in DB")
+    except Exception as e:
+        logger.warning(f"Startup DB check failed: {e}")
+
+    threading.Thread(target=monitor_loop, daemon=True).start()
+    threading.Thread(target=start_choice_sms, daemon=True).start()
+    # Start EVS SMS forwarder on boot (same as Choice SMS)
+    threading.Thread(target=_run_evs_sms_forwarder, daemon=True).start()
+    threading.Thread(target=periodic_cleanup, daemon=True).start()
+    # Start forwarders for all admin-added SMS panels
+    try:
+        start_all_panel_forwarders()
+    except Exception as e:
+        logger.error(f"Failed to start panel forwarders: {e}")
+    logger.info("Forwarders started (IVASMS + Choice SMS + EVS + Panels + cleanup)")
+    logger.info("Bot polling started.")
+    time.sleep(3)
+    bot.infinity_polling()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped.")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        traceback.print_exc()
+        sys.exit(1)
