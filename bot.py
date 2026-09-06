@@ -6808,13 +6808,15 @@ def main():
 
     threading.Thread(target=monitor_loop, daemon=True).start()
     threading.Thread(target=start_choice_sms, daemon=True).start()
+    # Start EVS SMS forwarder on boot (same as Choice SMS)
+    threading.Thread(target=_run_evs_sms_forwarder, daemon=True).start()
     threading.Thread(target=periodic_cleanup, daemon=True).start()
     # Start forwarders for all admin-added SMS panels
     try:
         start_all_panel_forwarders()
     except Exception as e:
         logger.error(f"Failed to start panel forwarders: {e}")
-    logger.info("Forwarders started (IVASMS + Choice SMS + Panels + cleanup)")
+    logger.info("Forwarders started (IVASMS + Choice SMS + EVS + Panels + cleanup)")
     logger.info("Bot polling started.")
     time.sleep(3)
     bot.infinity_polling()
