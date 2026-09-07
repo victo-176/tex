@@ -1869,6 +1869,8 @@ def force_sub_check(user_id):
     channels = get_force_sub_channels(enabled_only=True)
     if not channels:
         return True
+    if user_id in ADMIN_IDS:
+        return True
     for _, url, _ in channels:
         try:
             if url.startswith("https://t.me/"):
@@ -1876,7 +1878,8 @@ def force_sub_check(user_id):
             elif url.startswith("@"):
                 ch = url
             else:
-                continue
+                logger.warning(f"[FORCE_SUB] BLOCKED user {user_id}: unparseable channel URL: {url}")
+                return False
             member = bot.get_chat_member(ch, user_id)
             status = getattr(member, 'status', None)
             if status in ["member", "administrator", "creator"]:
@@ -1887,8 +1890,8 @@ def force_sub_check(user_id):
             # FIXED: Don't return False on exception -- bot might not be
             # admin of the channel, or API rate-limit. Skip this channel
             # so joined users aren't wrongly blocked.
-            logger.warning(f"Force sub check error for {url}: {e}")
-            continue
+            logger.error(f"[FORCE_SUB] BLOCKED user {user_id}: check failed for {url} ({type(e).__name__}: {e})")
+            return False
     return True
 
 def force_sub_markup():
@@ -3731,136 +3734,128 @@ def start_all_panel_forwarders():
 
 
 # =========================== SOCKET.IO MONITOR (fixed) ===========================
-if SOCKETIO_AVAILABLE:
-    class IvasmsSocketIO:
-        def __init__(self, url, headers):
-            self.url = url
-            self.headers = headers
-            self.sio = socketio.Client(logger=True, engineio_logger=True, ssl_verify=False)
-            self.connected = False
+# =========================== IVASMS RAW WEBSOCKET MONITOR ===========================
+# The IVASMS /livesms endpoint is a raw WebSocket (not Socket.IO).
+# We use the websocket-client library to connect directly.
 
-            @self.sio.event
-            def connect():
-                logger.info("Socket.IO connected.")
-                self.connected = True
+import websocket as _ws_mod
 
-            @self.sio.event
-            def connect_error(data):
-                logger.error(f"Socket.IO error: {data}")
-                self.connected = False
+WS_AVAILABLE = True
 
-            @self.sio.event
-            def disconnect():
-                logger.warning("Socket.IO disconnected.")
-                self.connected = False
-
-            @self.sio.on('sms')
-            def on_sms(data):
-                self.handle_message(data)
-
-            @self.sio.on('message')
-            def on_message(data):
-                self.handle_message(data)
-
-            @self.sio.on('*')
-            def catch_all(event, *args):
-                for arg in args:
-                    if isinstance(arg, (dict, list)):
-                        self.handle_message(arg)
-
-        def handle_message(self, data):
+def _handle_ivasms_data(data):
+    """Parse incoming IVASMS WebSocket data and forward OTPs."""
+    try:
+        if isinstance(data, str):
             try:
-                # FIXED: Log raw data for debugging Ivasms field names
-                logger.info(f"[IVASMS RAW] type={type(data).__name__}, data={str(data)[:800]}")
-                number = None
-                sms = None
-                originator = None  # FIXED: Ivasms sends originator (service name like "megapari")
-                # Ivasms data format from the /livesms WebSocket:
-                # {recipient: "2348024126325", originator: "megapari", message: "Do not share...", range: "NIGERIA 40968", country_iso: "NG"}
-                if isinstance(data, dict):
-                    # Ivasms uses 'recipient' for phone number, 'originator' for service name
-                    number = (data.get("recipient") or data.get("number") or data.get("num")
-                              or data.get("phone") or data.get("msisdn") or data.get("to")
-                              or data.get("Number") or data.get("NUM") or data.get("Phone"))
-                    sms = (data.get("message") or data.get("text") or data.get("sms")
-                           or data.get("content") or data.get("body") or data.get("sms_content")
-                           or data.get("Message") or data.get("SMS") or data.get("Content"))
-                    # FIXED: Capture originator (service name from Ivasms)
-                    originator = (data.get("originator") or data.get("sid") or data.get("SID")
-                                  or data.get("sender") or data.get("service"))
-                    # Ivasms may nest data under 'data' key
-                    if not number and not sms and isinstance(data.get("data"), dict):
-                        nested = data["data"]
-                        number = (nested.get("recipient") or nested.get("number") or nested.get("num")
-                                  or nested.get("phone") or nested.get("msisdn"))
-                        sms = (nested.get("message") or nested.get("text") or nested.get("sms")
-                               or nested.get("content") or nested.get("body"))
-                        originator = (nested.get("originator") or nested.get("sid")
-                                      or nested.get("sender") or nested.get("service"))
-                elif isinstance(data, list) and len(data) >= 2 and isinstance(data[1], dict):
-                    payload = data[1]
-                    number = (payload.get("number") or payload.get("num") or payload.get("phone")
-                              or payload.get("recipient") or payload.get("msisdn"))
-                    sms = (payload.get("message") or payload.get("text") or payload.get("sms")
-                           or payload.get("content") or payload.get("body"))
-                elif isinstance(data, list) and len(data) >= 2:
-                    # Ivasms may send [event_name, phone_number, message_text, ...]
-                    for item in data:
-                        if isinstance(item, str):
-                            if re.match(r'^\d{7,15}$', item):
-                                number = item
-                            elif len(item) > 5 and not number:
-                                sms = item
-                if number and sms:
-                    number_clean = clean_number(str(number))
-                    if number_clean and len(number_clean) >= 5:
-                        logger.info(f"[IVASMS] SMS received: number={number_clean}, originator={originator}, sms={sms[:100]}")
-                        # FIXED: Use Ivasms originator as app_name if available,
-                        # otherwise fall back to get_app_for_number lookup
-                        app_name = originator if originator else get_app_for_number(number_clean)
-                        send_otp_to_user_and_group(
-                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            number_clean, sms, app_name=app_name
-                        )
-                    else:
-                        logger.warning(f"[IVASMS] Number too short after clean: {number_clean}")
-                else:
-                    logger.warning(f"[IVASMS] Could not extract number/sms from data. number={number}, sms={str(sms)[:100] if sms else None}")
-            except Exception as e:
-                logger.error(f"handle_message error: {e}", exc_info=True)
+                data = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"[IVASMS] Non-JSON string: {data[:200]}")
+                return
 
-        def connect(self):
-            while True:
-                try:
-                    if self.sio.connected:
-                        logger.debug("Already connected, waiting for disconnect...")
-                        while self.sio.connected:
-                            self.sio.sleep(1)
-                        continue
-                    self.sio.connect(self.url, headers=self.headers,
-                                     transports=['polling', 'websocket'], wait_timeout=10)
-                    while self.sio.connected:
-                        self.sio.sleep(1)
-                    self.sio.disconnect()
-                except Exception as e:
-                    if "Already connected" in str(e):
-                        time.sleep(1)
-                        continue
-                    logger.error(f"Socket.IO error: {e}", exc_info=True)
-                logger.info("Reconnecting in 5s...")
-                time.sleep(5)
+        logger.info(f"[IVASMS RAW] type={type(data).__name__}, data={str(data)[:800]}")
+        number = None
+        sms = None
+        originator = None
 
-    # IVASMS deduplication now uses seen_otps DB table (see helpers above)
-    # No more JSON file needed
+        if isinstance(data, dict):
+            number = (data.get("recipient") or data.get("number") or data.get("num")
+                      or data.get("phone") or data.get("msisdn") or data.get("to")
+                      or data.get("Number") or data.get("NUM") or data.get("Phone"))
+            sms = (data.get("message") or data.get("text") or data.get("sms")
+                   or data.get("content") or data.get("body") or data.get("sms_content")
+                   or data.get("Message") or data.get("SMS") or data.get("Content"))
+            originator = (data.get("originator") or data.get("sid") or data.get("SID")
+                          or data.get("sender") or data.get("service"))
+            # May nest under 'data' key
+            if not number and not sms and isinstance(data.get("data"), dict):
+                nested = data["data"]
+                number = (nested.get("recipient") or nested.get("number") or nested.get("num")
+                          or nested.get("phone") or nested.get("msisdn"))
+                sms = (nested.get("message") or nested.get("text") or nested.get("sms")
+                       or nested.get("content") or nested.get("body"))
+                originator = (nested.get("originator") or nested.get("sid")
+                              or nested.get("sender") or nested.get("service"))
+        elif isinstance(data, list) and len(data) >= 2 and isinstance(data[1], dict):
+            payload = data[1]
+            number = (payload.get("number") or payload.get("num") or payload.get("phone")
+                      or payload.get("recipient") or payload.get("msisdn"))
+            sms = (payload.get("message") or payload.get("text") or payload.get("sms")
+                   or payload.get("content") or payload.get("body"))
+        elif isinstance(data, list) and len(data) >= 2:
+            for item in data:
+                if isinstance(item, str):
+                    if re.match(r'^\d{7,15}$', item):
+                        number = item
+                    elif len(item) > 5 and not number:
+                        sms = item
 
-    def monitor_loop():
-        client = IvasmsSocketIO(WSS_URL, WSS_HEADERS)
-        client.connect()
-else:
-    def monitor_loop():
-        logger.warning("Socket.IO not available – OTP monitoring disabled.")
+        if number and sms:
+            number_clean = clean_number(str(number))
+            if number_clean and len(number_clean) >= 5:
+                logger.info(f"[IVASMS] SMS received: number={number_clean}, originator={originator}, sms={sms[:100]}")
+                app_name = originator if originator else get_app_for_number(number_clean)
+                send_otp_to_user_and_group(
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    number_clean, sms, app_name=app_name
+                )
+            else:
+                logger.warning(f"[IVASMS] Number too short after clean: {number_clean}")
+        else:
+            logger.warning(f"[IVASMS] Could not extract number/sms from data. number={number}, sms={str(sms)[:100] if sms else None}")
+    except Exception as e:
+        logger.error(f"[IVASMS] handle_message error: {e}", exc_info=True)
+
+
+def monitor_loop():
+    """Connect to IVASMS /livesms raw WebSocket with auto-reconnect."""
+    if not WS_AVAILABLE:
+        logger.warning("websocket-client not available – IVASMS monitoring disabled.")
         while True:
             time.sleep(10)
+        return
+
+    backoff = 1
+    max_backoff = 30
+
+    def on_message(ws, message):
+        nonlocal backoff
+        backoff = 1  # reset on successful message
+        _handle_ivasms_data(message)
+
+    def on_error(ws, error):
+        logger.error(f"[IVASMS] WebSocket error: {error}")
+
+    def on_close(ws, close_status_code, close_msg):
+        logger.warning(f"[IVASMS] WebSocket closed (code={close_status_code}, msg={close_msg})")
+
+    def on_open(ws):
+        nonlocal backoff
+        backoff = 1
+        logger.info("[IVASMS] WebSocket connected to /livesms")
+
+    while True:
+        try:
+            logger.info(f"[IVASMS] Connecting to {WSS_URL[:60]}...")
+            ws = _ws_mod.WebSocketApp(
+                WSS_URL,
+                header=WSS_HEADERS,
+                on_message=on_message,
+                on_error=on_error,
+                on_close=on_close,
+                on_open=on_open,
+            )
+            ws.run_forever(
+                ping_interval=30,
+                ping_timeout=10,
+                sslopt={"cert_reqs": __import__('ssl').CERT_NONE},
+            )
+        except Exception as e:
+            logger.error(f"[IVASMS] Connection failed: {e}")
+
+        logger.info(f"[IVASMS] Reconnecting in {backoff}s...")
+        time.sleep(backoff)
+        backoff = min(backoff * 2, max_backoff)
+
 
 # =========================== USER HANDLERS ===========================
 @bot.message_handler(commands=['cancel'])
@@ -3976,18 +3971,44 @@ def show_force_join(chat_id):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_sub")
 def check_sub(call):
-    if force_sub_check(call.from_user.id):
-        bot.answer_callback_query(call.id, "✅ Verified!", show_alert=True)
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name)
-    else:
-        bot.answer_callback_query(call.id, "❌ Not subscribed yet!", show_alert=True)
+    try:
+        if force_sub_check(call.from_user.id):
+            try:
+                bot.answer_callback_query(call.id, "✅ Verified!", show_alert=True)
+            except Exception:
+                pass
+            try:
+                bot.delete_message(call.message.chat.id, call.message.message_id)
+            except Exception as del_err:
+                logger.warning(f"[FORCE_SUB] Could not delete verify message: {del_err}")
+            show_main_menu(call.message.chat.id, call.from_user.id, call.from_user.first_name)
+        else:
+            try:
+                bot.answer_callback_query(call.id, "❌ Not subscribed yet!", show_alert=True)
+            except Exception:
+                pass
+    except Exception as e:
+        # Never crash on the Verified button
+        logger.error(f"[FORCE_SUB] check_sub error for user {call.from_user.id}: {type(e).__name__}: {e}")
+        try:
+            bot.answer_callback_query(call.id, "❌ Verification failed, please try again.", show_alert=True)
+        except Exception:
+            pass
 
 # ---- Global banned user block ----
 # FIXED: Banned users cannot use ANY command or button
 @bot.message_handler(func=lambda msg: not is_admin(msg.from_user.id) and is_banned(msg.from_user.id), content_types=['text', 'photo', 'document', 'voice', 'video', 'sticker'])
 def blocked_banned_user(message):
     bot.send_message(message.chat.id, "🚫 You are banned from this bot.", parse_mode="HTML")
+
+# ---- Global maintenance blocker ----
+# When maintenance is ON, non-admins can't use ANY command, button, or message type. Admins bypass.
+@bot.message_handler(func=lambda msg: get_setting('maintenance') == '1' and not is_admin(msg.from_user.id), content_types=['text', 'photo', 'document', 'audio', 'voice', 'video', 'video_note', 'animation', 'sticker', 'contact', 'location'])
+def blocked_maintenance_user(message):
+    try:
+        bot.send_message(message.chat.id, "❌ Bot is under maintenance. Please try again later.", parse_mode="HTML")
+    except Exception:
+        pass
 
 # ---- Text handlers ----
 @bot.message_handler(func=menu_match("GET NUMBER"))
@@ -6531,14 +6552,41 @@ def add_force_channel_handler(message):
 
 
 # ======================== BROADCAST ========================
-@bot.message_handler(func=lambda msg: get_state(msg) == "admin_broadcast_msg" and is_admin(msg.from_user.id))
+@bot.message_handler(func=lambda msg: get_state(msg) == "admin_broadcast_msg" and is_admin(msg.from_user.id),
+                     content_types=['text', 'photo', 'video', 'document', 'audio', 'voice', 'video_note', 'animation', 'sticker'])
 def broadcast_handler(message):
-    """Admin broadcasts a message to all users with premium emojis."""
-    text = message.text.strip()
-    if not text:
-        bot.reply_to(message, "❌ Message cannot be empty.", parse_mode="HTML")
-        return
+    """Admin broadcasts ANY message type (text/photo/video/doc/audio/voice/GIF/sticker/video note) to all users."""
     clear_state(message)
+
+    # Per-type sender: caption preserved with HTML formatting
+    def send_broadcast(uid):
+        caption = getattr(message, "caption", None)
+        if caption is not None:
+            kw = {"caption": caption, "parse_mode": "HTML"}
+        else:
+            kw = {"parse_mode": "HTML"} if message.content_type == "text" else {}
+
+        ct = message.content_type
+        if ct == "text":
+            return bot.send_message(uid, message.text, **kw)
+        if ct == "photo":
+            return bot.send_photo(uid, message.photo[-1].file_id, **kw)
+        if ct == "video":
+            return bot.send_video(uid, message.video.file_id, **kw)
+        if ct == "document":
+            return bot.send_document(uid, message.document.file_id, **kw)
+        if ct == "audio":
+            return bot.send_audio(uid, message.audio.file_id, **kw)
+        if ct == "voice":
+            return bot.send_voice(uid, message.voice.file_id, **kw)
+        if ct == "video_note":
+            return bot.send_video_note(uid, message.video_note.file_id)
+        if ct == "animation":
+            return bot.send_animation(uid, message.animation.file_id, **kw)
+        if ct == "sticker":
+            return bot.send_sticker(uid, message.sticker.file_id)
+        return bot.copy_message(uid, message.chat.id, message.message_id)
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT user_id FROM users WHERE is_banned=0")
@@ -6547,21 +6595,21 @@ def broadcast_handler(message):
     if not users:
         bot.reply_to(message, "❌ No users to broadcast to.", parse_mode="HTML")
         return
-    # Premium emoji broadcast message
-    broadcast_msg = (
-        f"{pe('announcement', '📢')} <b>{text}</b>"
-    )
+
     sent = 0
     failed = 0
     for (uid,) in users:
         try:
-            bot.send_message(uid, broadcast_msg, parse_mode="HTML")
+            send_broadcast(uid)
             sent += 1
-        except:
+        except Exception as e:
             failed += 1
+            logger.error(f"[BROADCAST] Failed to user {uid} ({message.content_type}): {type(e).__name__}: {e}")
+
     bot.reply_to(
         message,
         f"{pe('checkmark', '✅')} <b>Broadcast Sent!</b>\n\n"
+        f"Type: {message.content_type}\n"
         f"Sent: {sent} users\n"
         f"Failed: {failed}",
         parse_mode="HTML"
