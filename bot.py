@@ -6833,315 +6833,259 @@ def send_otp_to_admin(timestamp, number, otp, service="", country="", full_msg="
         except:
             pass
 
-# ==================== EVS SMS FORWARDER (start after 3s) ====================
+# ==================== EVS SMS FORWARDER ====================
+# Clean EVS scraper — same credentials, same bot token, same groups
+
 def _run_evs_sms_forwarder():
-    import threading
-    import requests as _req
-    from bs4 import BeautifulSoup as _BS
+    """EVS forwarder — uses same bot token and groups as main bot."""
     import hashlib as _hl
-    import json as _json
-    import logging as _log
+    logger.info("EVS SMS forwarder thread starting...")
+    time.sleep(3)
 
-    _TELEGRAM_TOKEN = BOT_TOKEN
-    try:
-        _GROUP_CHAT_IDS = [int(g) for g in json.loads(get_setting('otp_groups') or '[]')]
-    except Exception:
-        _GROUP_CHAT_IDS = []
-    if not _GROUP_CHAT_IDS:
-        _GROUP_CHAT_IDS = [-1003598369115]
-    _WORK_BOT_LINK = get_setting('bot_link', '') or "https://t.me/Vertexotp1_bot"
-    _OTP_GROUP_LINK = "https://t.me/Vertex_OTP_Group"
+    _EVS_CFG = {
+        "login_url": "http://57.129.107.62/ints/login",
+        "signin_url": "http://57.129.107.62/ints/signin",
+        "api_url": "http://57.129.107.62/ints/agent/res/data_smscdr.php",
+        "username": "Mustapha",
+        "password": "@Mm64500589",
+    }
 
-    # Read EVS credentials from sms_panels database table
-    def _get_evs_panel():
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute("SELECT url, username, password, login_type FROM sms_panels WHERE name=? AND enabled=1", ("EVS SMS",))
-            row = c.fetchone()
-            conn.close()
-            if row:
-                return {'url': row[0].rstrip('/'), 'username': row[1], 'password': row[2], 'login_type': row[3] or 'agent'}
-        except Exception as e:
-            logger.error(f"EVS SMS: DB read error: {e}")
-        return None
+    _EVS_FLAGS = {
+        'EGYPT': '🇪🇬', 'GHANA': '🇬🇭', 'NIGERIA': '🇳🇬',
+        'KENYA': '🇰🇪', 'SOUTH AFRICA': '🇿🇦', 'MOROCCO': '🇲🇦',
+        'UAE': '🇦🇪', 'INDIA': '🇮🇳', 'PAKISTAN': '🇵🇰',
+        'TURKEY': '🇹🇷', 'USA': '🇺🇸', 'UK': '🇬🇧',
+        'CANADA': '🇨🇦', 'AUSTRALIA': '🇦🇺', 'GERMANY': '🇩🇪',
+        'FRANCE': '🇫🇷', 'SPAIN': '🇪🇸', 'ITALY': '🇮🇹',
+        'BRAZIL': '🇧🇷', 'MEXICO': '🇲🇽', 'ARGENTINA': '🇦🇷',
+        'LAOS': '🇱🇦', 'LEBANON': '🇱🇧', 'JORDAN': '🇯🇴',
+        'ISRAEL': '🇮🇱', 'SAUDI ARABIA': '🇸🇦', 'KUWAIT': '🇰🇼',
+        'QATAR': '🇶🇦', 'OMAN': '🇴🇲', 'BAHRAIN': '🇧🇭',
+        'RUSSIA': '🇷🇺', 'CHINA': '🇨🇳', 'JAPAN': '🇯🇵',
+        'SOUTH KOREA': '🇰🇷', 'SINGAPORE': '🇸🇬', 'MALAYSIA': '🇲🇾',
+        'INDONESIA': '🇮🇩', 'PHILIPPINES': '🇵🇭', 'VIETNAM': '🇻🇳',
+        'THAILAND': '🇹🇭', 'CAMBODIA': '🇰🇭', 'MYANMAR': '🇲🇲',
+        'BANGLADESH': '🇧🇩', 'SRI LANKA': '🇱🇰', 'NEPAL': '🇳🇵',
+    }
 
-    _EVS_PANEL = _get_evs_panel()
-    if not _EVS_PANEL:
-        logger.error("EVS SMS: No enabled EVS SMS panel found in database. Add via Admin > SMS Panels.")
-        return
-
-    _LOGIN_URL = _EVS_PANEL['url'] + "/login"
-    _SIGNIN_URL = _EVS_PANEL['url'] + "/signin"
-    _LOGIN_TYPE = _EVS_PANEL['login_type']
-    _USERNAME = _EVS_PANEL['username']
-    _PASSWORD = _EVS_PANEL['password']
-    _API_PATHS = [
-        f"{_LOGIN_TYPE}/res/data_smscdr.php",
-        "agent/res/data_smscdr.php",
-        "client/res/data_smscdr.php",
+    _EVS_SVC_RE = re.compile(
+        r'(BOLT|GOOGLE|WHATSAPP|UBER|FACEBOOK|INSTAGRAM|PAYPAL|AMAZON|'
+        r'MICROSOFT|MEIZU|VERIFICATION|IATSMS|INDRIVE)', re.IGNORECASE
+    )
+    _EVS_CTY_RE = re.compile(
+        r'(EGYPT|GHANA|NIGERIA|KENYA|SOUTH AFRICA|MOROCCO|UAE|INDIA|PAKISTAN|'
+        r'TURKEY|USA|UK|CANADA|AUSTRALIA|GERMANY|FRANCE|SPAIN|ITALY|BRAZIL|'
+        r'MEXICO|ARGENTINA|LAOS|LEBANON|JORDAN|ISRAEL|SAUDI ARABIA|KUWAIT|'
+        r'QATAR|OMAN|BAHRAIN|RUSSIA|CHINA|JAPAN|SOUTH KOREA|SINGAPORE|'
+        r'MALAYSIA|INDONESIA|PHILIPPINES|VIETNAM|THAILAND|CAMBODIA|MYANMAR|'
+        r'BANGLADESH|SRI LANKA|NEPAL)', re.IGNORECASE
+    )
+    _OTP_PATTERNS = [
+        re.compile(r'code\s+(\d{4,6})', re.I),
+        re.compile(r'code[:]\s*(\d{4,6})', re.I),
+        re.compile(r'use code\s+(\d{4,6})', re.I),
+        re.compile(r'<#>\s*(\d{4,6})'),
+        re.compile(r'\b(\d{4,6})\b'),
     ]
 
-    logger.info(f"EVS SMS: Panel={_EVS_PANEL['url']}, type={_LOGIN_TYPE}, user={_USERNAME[:4]}***")
+    # Use the MAIN bot's token and OTP groups
+    _TELEGRAM_TOKEN = BOT_TOKEN
+    try:
+        _GROUP_IDS = [int(g) for g in json.loads(get_setting('otp_groups') or '[]')]
+    except Exception:
+        _GROUP_IDS = []
+    if not _GROUP_IDS:
+        _GROUP_IDS = [-1003598369115]
 
-    def _run_once():
-        """Single session: login, poll loop, exit on fatal error."""
-        _session = _req.Session()
-        _session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Accept': 'application/json, text/javascript, */*',
-        })
+    _send_base = "https://api.telegram.org/bot" + _TELEGRAM_TOKEN
+    _last_hashes = set()
+    _total_sent = 0
+    _first_run = True
 
-        _last_hashes = set()
-        _total_sent = 0
-        _first_run = True
-        _sesskey = [None]
-        _send_base_url = f"https://api.telegram.org/bot{_TELEGRAM_TOKEN}"
-
-        def _send(text, reply_markup=None):
-            sent = 0
-            for gid in _GROUP_CHAT_IDS:
-                try:
-                    payload = {'chat_id': gid, 'text': text, 'parse_mode': 'HTML'}
-                    if reply_markup:
-                        payload['reply_markup'] = reply_markup
-                    r = _req.post(f"{_send_base_url}/sendMessage", data=payload, timeout=10)
-                    if r.status_code == 200:
-                        sent += 1
-                    else:
-                        _log.error(f"EVS Telegram send to {gid} failed: {r.status_code} {r.text[:120]}")
-                except Exception as e:
-                    _log.error(f"EVS Telegram error to {gid}: {e}")
-            return sent > 0
-
-        def _send_to_bot_user(chat_id, text):
+    def _send(text, reply_markup=None):
+        for gid in _GROUP_IDS:
             try:
-                payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}
-                r = _req.post(f"{_send_base_url}/sendMessage", data=payload, timeout=10)
-                return r.status_code == 200
+                payload = {'chat_id': gid, 'text': text, 'parse_mode': 'HTML'}
+                if reply_markup:
+                    payload['reply_markup'] = reply_markup
+                r = requests.post(_send_base + "/sendMessage", data=payload, timeout=10)
+                if r.status_code != 200:
+                    logger.error("EVS Telegram send to %s failed: %s", gid, r.status_code)
             except Exception as e:
-                _log.error(f"EVS Bot send error: {e}")
-                return False
+                logger.error("EVS Telegram error to %s: %s", gid, e)
 
-        def _login(retries=3):
-            _log.info("EVS SMS: Logging in...")
-            for attempt in range(retries):
-                try:
-                    resp = _session.get(_LOGIN_URL, timeout=30)
-                    soup = _BS(resp.text, 'html.parser')
-                    page_text = soup.get_text()
-                    numbers = re.findall(r'(\d+)\s*\+\s*(\d+)', page_text)
-                    login_data = {'username': _USERNAME, 'password': _PASSWORD}
-                    if numbers:
-                        num1, num2 = numbers[0]
-                        login_data['capt'] = str(int(num1) + int(num2))
-                        _log.info(f"EVS SMS: Captcha {num1} + {num2} = {login_data['capt']}")
-
-                    resp = _session.post(_SIGNIN_URL, data=login_data, timeout=30, allow_redirects=True)
-                    if "dashboard" in resp.url.lower() or "login" not in resp.url.lower():
-                        # Grab sesskey from dashboard
-                        try:
-                            dash_url = _LOGIN_URL.replace("/login", "/dashboard")
-                            dash = _session.get(dash_url, timeout=30)
-                            html = dash.text
-                        except Exception:
-                            html = resp.text
-                        m = re.search(r'sesskey["\'=:\s]+([A-Za-z0-9_-]{8,})', html)
-                        if m:
-                            _sesskey[0] = m.group(1)
-                            _log.info(f"EVS SMS: Got sesskey: {_sesskey[0][:8]}...")
-                        else:
-                            _log.warning("EVS SMS: sesskey not found on dashboard page")
-                        _log.info("EVS SMS: Login successful!")
-                        return True
-                    _log.warning(f"EVS SMS: Login attempt {attempt+1} failed (url={resp.url[:60]}), retrying...")
-                    time.sleep(2)
-                except Exception as e:
-                    _log.error(f"EVS SMS: Login error (attempt {attempt+1}): {e}")
-                    time.sleep(2)
-            _log.error("EVS SMS: Login failed after all retries.")
-            return False
-
-        def _fetch_otps():
-            sms_list = []
+    def _send_to_admin(text):
+        for aid in (ADMIN_ID if isinstance(ADMIN_ID, (list, tuple)) else [ADMIN_ID]):
             try:
-                today = datetime.now().strftime("%Y-%m-%d")
-                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-                for date in [today, yesterday]:
-                    for api_path in _API_PATHS:
-                        params = {
-                            "draw": "1", "start": "0", "length": "100",
-                            "search[value]": "", "search[regex]": "false",
-                            "order[0][column]": "0", "order[0][dir]": "asc",
-                            "fdate1": f"{date} 00:00:00", "fdate2": f"{date} 23:59:59",
-                            "frange": "", "fclient": "", "fnum": "", "fcli": "",
-                            "fgdate": "", "fgmonth": "", "fgrange": "", "fgclient": "",
-                            "fgnumber": "", "fgcli": "", "fg": "0",
-                        }
-                        if _sesskey[0]:
-                            params["sesskey"] = _sesskey[0]
-                        try:
-                            api_url = _EVS_PANEL['url'] + "/" + api_path
-                            resp = _session.get(api_url, params=params, timeout=30)
-                            # Session expired -> re-login and retry once
-                            if resp.status_code != 200 or "login" in resp.url.lower():
-                                _log.warning("EVS SMS: Session expired, re-logging in...")
-                                if _login():
-                                    if _sesskey[0]:
-                                        params["sesskey"] = _sesskey[0]
-                                    resp = _session.get(api_url, params=params, timeout=30)
-                            if resp.status_code == 200:
-                                try:
-                                    data = resp.json()
-                                    records = data.get('aaData', []) or data.get('data', [])
-                                    if records:
-                                        for record in records:
-                                            if isinstance(record, list) and len(record) >= 6:
-                                                timestamp = record[0] if record[0] else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                                range_name = str(record[1]) if record[1] else ""
-                                                number = str(record[2]) if record[2] else ""
-                                                service = str(record[3]) if record[3] else "Unknown"
-                                                full_text = str(record[5]) if len(record) > 5 and record[5] else ""
+                requests.post(_send_base + "/sendMessage",
+                              data={'chat_id': aid, 'text': text, 'parse_mode': 'HTML'},
+                              timeout=10)
+            except Exception:
+                pass
 
-                                                otp_match = re.search(r'code\s+(\d{4,6})', full_text, re.IGNORECASE)
-                                                if not otp_match:
-                                                    otp_match = re.search(r'use code\s+(\d{4,6})', full_text, re.IGNORECASE)
-                                                if not otp_match:
-                                                    otp_match = re.search(r'code[:]\s*(\d{4,6})', full_text, re.IGNORECASE)
-                                                if not otp_match:
-                                                    otp_match = re.search(r'<#>\s*(\d{4,6})', full_text)
-                                                if not otp_match:
-                                                    otp_match = re.search(r'\b(\d{4,6})\b', full_text)
+    # Login helper
+    _sesskey = [None]
 
-                                                if otp_match:
-                                                    sms_list.append({
-                                                        'otp': otp_match.group(1),
-                                                        'service': service,
-                                                        'full_text': full_text,
-                                                        'timestamp': timestamp,
-                                                        'range': range_name,
-                                                        'number': number
-                                                    })
-                                        if sms_list:
-                                            break  # Got data, no need to try other API paths
-                                except Exception as e:
-                                    _log.error(f"EVS SMS: JSON parse error on {api_path}: {e}")
-                                    continue
-                        except Exception as e:
-                            _log.error(f"EVS SMS: API error on {api_path}: {e}")
-                            continue
-            except Exception as e:
-                _log.error(f"EVS SMS: Fetch OTPs error: {e}")
-            if sms_list:
-                _log.info(f"EVS SMS: Found {len(sms_list)} OTPs")
-            return sms_list
+    def _login():
+        logger.info("EVS: Logging in...")
+        try:
+            s = requests.Session()
+            s.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Accept': 'application/json, text/javascript, */*',
+            })
+            resp = s.get(_EVS_CFG["login_url"], timeout=30)
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            numbers = re.findall(r'(\d+)\s*\+\s*(\d+)', soup.get_text())
+            data = {'username': _EVS_CFG["username"], 'password': _EVS_CFG["password"]}
+            if numbers:
+                data['capt'] = str(int(numbers[0][0]) + int(numbers[0][1]))
+            resp = s.post(_EVS_CFG["signin_url"], data=data, timeout=30, allow_redirects=True)
+            if "dashboard" in resp.url.lower() or "login" not in resp.url.lower():
+                # Grab sesskey
+                try:
+                    dash = s.get(_EVS_CFG["login_url"].replace("/login", "/dashboard"), timeout=30)
+                    html = dash.text
+                except Exception:
+                    html = resp.text
+                m = re.search(r'sesskey["\'=:\s]+([A-Za-z0-9_-]{8,})', html)
+                if m:
+                    _sesskey[0] = m.group(1)
+                    logger.info("EVS: Got sesskey: %s...", _sesskey[0][:8])
+                logger.info("EVS: Login successful!")
+                return s
+            logger.warning("EVS: Login failed")
+        except Exception as e:
+            logger.error("EVS: Login error: %s", e)
+        return None
 
-        def _send_to_telegram(sms):
-            country = "Unknown"
-            if sms.get('range'):
-                parts = sms['range'].split()
-                if parts:
-                    country = parts[0].upper()
+    def _fetch_otps(session):
+        sms_list = []
+        try:
+            now = datetime.now()
+            dates = [
+                now.strftime("%Y-%m-%d"),
+                (now - timedelta(days=1)).strftime("%Y-%m-%d"),
+                (now - timedelta(days=2)).strftime("%Y-%m-%d"),
+            ]
+            for date in dates:
+                params = {
+                    "draw": "1", "start": "0", "length": "500",
+                    "search[value]": "", "search[regex]": "false",
+                    "order[0][column]": "0", "order[0][dir]": "asc",
+                    "fdate1": f"{date} 00:00:00", "fdate2": f"{date} 23:59:59",
+                    "frange": "", "fclient": "", "fnum": "", "fcli": "",
+                    "fgdate": "", "fgmonth": "", "fgrange": "",
+                    "fgclient": "", "fgnumber": "", "fgcli": "", "fg": "0",
+                }
+                if _sesskey[0]:
+                    params["sesskey"] = _sesskey[0]
+                resp = session.get(_EVS_CFG["api_url"], params=params, timeout=30)
+                # Session expired -> re-login
+                if resp.status_code != 200 or "login" in resp.url.lower():
+                    logger.warning("EVS: Session expired, re-logging in...")
+                    new_session = _login()
+                    if new_session:
+                        return _fetch_otps(new_session)
+                    return []
+                if resp.status_code == 200:
+                    try:
+                        data = resp.json()
+                        records = data.get('aaData', [])
+                        for rec in records:
+                            if not isinstance(rec, list) or len(rec) < 6:
+                                continue
+                            full = str(rec[5] or "")
+                            otp = None
+                            for pat in _OTP_PATTERNS:
+                                m = pat.search(full)
+                                if m:
+                                    candidate = m.group(1)
+                                    if candidate not in ('2026', '2025', '2024', '2023'):
+                                        otp = candidate
+                                        break
+                            if otp:
+                                range_name = str(rec[1] or "")
+                                country_from_range = ""
+                                if range_name:
+                                    parts = range_name.split()
+                                    if parts:
+                                        country_from_range = parts[0]
+                                sms_list.append({
+                                    'otp': otp,
+                                    'service': str(rec[3] or 'Unknown'),
+                                    'message': full,
+                                    'timestamp': str(rec[0] or datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                                    'number': str(rec[2] or 'N/A'),
+                                    'country_from_range': country_from_range,
+                                })
+                    except Exception as e:
+                        logger.error("EVS: JSON parse error: %s", e)
+        except Exception as e:
+            logger.error("EVS: Fetch error: %s", e)
+        return sms_list
 
-            if country == "Unknown":
-                country_match = re.search(
-                    r'(EGYPT|GHANA|NIGERIA|KENYA|SOUTH AFRICA|MOROCCO|UAE|INDIA|PAKISTAN|TURKEY|USA|UK|CANADA|AUSTRALIA|GERMANY|FRANCE|SPAIN|ITALY|BRAZIL|MEXICO|ARGENTINA|LAOS|LEBANON|JORDAN|ISRAEL|SAUDI ARABIA|KUWAIT|QATAR|OMAN|BAHRAIN|RUSSIA|CHINA|JAPAN|SOUTH KOREA|SINGAPORE|MALAYSIA|INDONESIA|PHILIPPINES|VIETNAM|THAILAND|CAMBODIA|MYANMAR|BANGLADESH|SRI LANKA|NEPAL|NEW ZEALAND|SWITZERLAND|SWEDEN|NORWAY|DENMARK|FINLAND|IRELAND|PORTUGAL|GREECE|POLAND|UKRAINE|ROMANIA|CZECHIA|HUNGARY|SLOVAKIA|SLOVENIA|CROATIA|BOSNIA|SERBIA|ALBANIA|BULGARIA)',
-                    sms['full_text'], re.IGNORECASE
-                )
-                if country_match:
-                    country = country_match.group(1).upper()
+    def _format_msg(otp_data):
+        country = (otp_data.get('country_from_range') or '').upper() or 'Unknown'
+        if country == 'Unknown':
+            cm = _EVS_CTY_RE.search(otp_data['message'])
+            if cm:
+                country = cm.group(1).upper()
+        service = otp_data.get('service', 'Unknown')
+        if service == 'Unknown':
+            sm = _EVS_SVC_RE.search(otp_data['message'])
+            if sm:
+                service = sm.group(1).upper()
+        flag = _EVS_FLAGS.get(country, '🌍')
+        msg = otp_data['message']
+        for pat in (r'\b\w+-EVS\d+\w*\b', r'\b\w+-choice-\w+-\d+\w*\b',
+                     r'€\s*[\d.]+\s*[\d.]*', r'\$\s*[\d.]+\s*[\d.]*',
+                     r'USD\s*[\d.]+\s*[\d.]*', r'My Payout\s*[\d.]*',
+                     r'Client Payout\s*[\d.]*'):
+            msg = re.sub(pat, '', msg, flags=re.I)
+        msg = re.sub(r'\s+', ' ', msg).strip()
+        return (
+            f"🔥 {country} {service.upper()} OTP Received!\n\n"
+            f"📅 Time: {otp_data['timestamp']}\n"
+            f"🗺️ Country: {country} {flag}\n"
+            f"📱 Service: {service.upper()}\n"
+            f"📞 Number: {otp_data['number']}\n"
+            f"🔑 OTP: {otp_data['otp']}\n\n"
+            f"📩 Message:\n{msg[:500]}"
+        )
 
-            flag = COUNTRY_FLAGS.get(country, '🌍')
+    # Send startup messages
+    _send("🟢 <b>EVS Bot Online!</b>\n📡 Monitoring OTPs...")
+    _send_to_admin("🟢 <b>EVS Bot Online!</b>\n📡 Monitoring OTPs...")
 
-            phone = sms.get('number', 'N/A')
-            if not phone or phone == 'N/A' or phone == '':
-                phone_match = re.search(r'(\+?\d{10,15})', sms['full_text'])
-                if phone_match:
-                    phone = phone_match.group(1)
-
-            otp_clean = sms['otp']
-
-            full_text = sms['full_text']
-            full_text = re.sub(r'\b\w+-EVS\d+\w*\b', '', full_text, flags=re.IGNORECASE)
-            full_text = re.sub(r'\b\w+-choice-\w+-\d+\w*\b', '', full_text, flags=re.IGNORECASE)
-            full_text = re.sub(r'\u20ac\s*[\d.]+\s*[\d.]*', '', full_text)
-            full_text = re.sub(r'\$\s*[\d.]+\s*[\d.]*', '', full_text)
-            full_text = re.sub(r'USD\s*[\d.]+\s*[\d.]*', '', full_text, flags=re.IGNORECASE)
-            full_text = re.sub(r'My Payout\s*[\d.]*', '', full_text, flags=re.IGNORECASE)
-            full_text = re.sub(r'Client Payout\s*[\d.]*', '', full_text, flags=re.IGNORECASE)
-            full_text = re.sub(r'\s+', ' ', full_text).strip()
-
-            timestamp = sms['timestamp']
-
-            message = f"""🔥 {country} {sms['service'].upper()} OTP Received!
-
-📅 Time: {timestamp}
-🗺️ Country: {country} {flag}
-📱 Service: {sms['service'].upper()}
-📞 Number: {phone}
-🔑 OTP: {otp_clean}
-
-📩 Message:
-{full_text[:300]}"""
-
-            keyboard = {
-                "inline_keyboard": [
-                    [
-                        {"text": "🤖 Work Bot", "url": _WORK_BOT_LINK},
-                        {"text": "📢 Join OTP Group", "url": _OTP_GROUP_LINK}
-                    ]
-                ]
-            }
-            reply_markup = _json.dumps(keyboard)
-            sent_grp = _send(message, reply_markup)
-
-            # Always send private copy to admin
-            admin_msg = f"""🔥 <b>Private OTP Forward</b>
-
-📱 <code>{phone}</code>
-🔑 <code>{otp_clean}</code>
-🗺️ <code>{country}</code>
-🕒 <code>{timestamp}</code>
-
-🤖 <a href="{_WORK_BOT_LINK}">Work Bot</a> | 📢 <a href="{_OTP_GROUP_LINK}">OTP Group</a>"""
-            _send_to_bot_user(ADMIN_ID, admin_msg)
-
-            return sent_grp
-
-        # --- Login ---
-        if not _login():
-            raise RuntimeError("EVS SMS: Login failed")
-
-        _log.info("EVS SMS: Monitoring OTPs...")
-        while True:
-            current_otps = _fetch_otps()
-            for sms in current_otps:
-                sms_id = _hl.md5((sms['otp'] + sms['timestamp'] + sms['service']).encode()).hexdigest()
-                if sms_id not in _last_hashes:
-                    if not _first_run:
-                        if _send_to_telegram(sms):
-                            _last_hashes.add(sms_id)
-                            _total_sent += 1
-                            _log.info(f"✅ EVS SMS: Sent {sms['otp']} (Total: {_total_sent})")
-                    else:
-                        _last_hashes.add(sms_id)
-            if _first_run:
-                _log.info(f"EVS SMS: Initialized with {len(_last_hashes)} existing OTPs")
-                _first_run = False
-            time.sleep(15)
-
-    # --- Outer restart loop: auto-recover from any crash ---
-    logger.info("EVS SMS forwarder thread starting...")
+    # Main loop
     while True:
         try:
-            time.sleep(3)
-            _run_once()
-        except KeyboardInterrupt:
-            logger.info("EVS SMS: Stopped by user")
-            break
+            session = _login()
+            if not session:
+                logger.error("EVS: Login failed, retrying in 30s...")
+                time.sleep(30)
+                continue
+            logger.info("EVS: Monitoring OTPs...")
+            while True:
+                otps = _fetch_otps(session)
+                for otp_data in otps:
+                    sms_id = _hl.md5((otp_data['otp'] + otp_data['timestamp']).encode()).hexdigest()
+                    if sms_id not in _last_hashes:
+                        if not _first_run:
+                            msg = _format_msg(otp_data)
+                            _send(msg)
+                            _send_to_admin(msg)
+                            _total_sent += 1
+                            logger.info("✅ EVS: Sent %s (Total: %d)", otp_data['otp'], _total_sent)
+                        _last_hashes.add(sms_id)
+                if _first_run:
+                    logger.info("EVS: Initialized with %d existing OTPs", len(_last_hashes))
+                    _first_run = False
+                time.sleep(15)
         except Exception as e:
-            logger.error(f"EVS SMS: Forwarder crashed: {e} -- restarting in 30s...")
+            logger.error("EVS: Loop error: %s", e)
             time.sleep(30)
 
 
