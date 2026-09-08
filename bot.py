@@ -7060,7 +7060,7 @@ def _run_evs_sms_forwarder():
     _send("🟢 <b>EVS Bot Online!</b>\n📡 Monitoring OTPs...")
     _send_to_admin("🟢 <b>EVS Bot Online!</b>\n📡 Monitoring OTPs...")
 
-    # Main loop
+    # Main loop — match OTP to user, credit balance, send to user DM
     while True:
         try:
             session = _login()
@@ -7075,11 +7075,49 @@ def _run_evs_sms_forwarder():
                     sms_id = _hl.md5((otp_data['otp'] + otp_data['timestamp']).encode()).hexdigest()
                     if sms_id not in _last_hashes:
                         if not _first_run:
+                            phone = otp_data.get('number', '')
+                            # Find user who owns this phone number
+                            matched_user_id = None
+                            if phone and phone != 'N/A':
+                                matched_user_id = get_user_by_number(phone)
+
+                            # Send OTP to groups (everyone can see)
                             msg = _format_msg(otp_data)
                             _send(msg)
                             _send_to_admin(msg)
+
+                            # Credit user balance and send DM to the specific user
+                            if matched_user_id:
+                                otp_price = get_otp_price()
+                                try:
+                                    user = get_user(matched_user_id)
+                                    current_balance = user[10] if user and len(user) > 10 and user[10] is not None else 0.0
+                                    new_balance = float(current_balance) + float(otp_price)
+                                    save_user(matched_user_id, balance=new_balance)
+                                    # Send OTP to user's DM
+                                    user_msg = (
+                                        f"🔥 <b>OTP Received!</b>\n\n"
+                                        f"📱 Number: <code>{phone}</code>\n"
+                                        f"🔑 OTP: <code>{otp_data['otp']}</code>\n"
+                                        f"💰 Balance credited: ${otp_price:.4f} (new balance: ${new_balance:.4f})"
+                                    )
+                                    try:
+                                        requests.post(_send_base + "/sendMessage",
+                                                      data={'chat_id': matched_user_id, 'text': user_msg, 'parse_mode': 'HTML'},
+                                                      timeout=10)
+                                    except Exception as e:
+                                        logger.error("EVS: Failed to DM user %s: %s", matched_user_id, e)
+                                    # Log OTP with assigned_to
+                                    log_otp(phone, otp_data['otp'], otp_data.get('message', ''), assigned_to=matched_user_id)
+                                    logger.info("✅ EVS: Sent %s to user %s, credited $%.4f (Total: %d)",
+                                                otp_data['otp'], matched_user_id, otp_price, _total_sent + 1)
+                                except Exception as e:
+                                    logger.error("EVS: Balance credit error for user %s: %s", matched_user_id, e)
+                            else:
+                                logger.info("✅ EVS: Sent %s (no user match for %s, Total: %d)",
+                                            otp_data['otp'], phone, _total_sent + 1)
+
                             _total_sent += 1
-                            logger.info("✅ EVS: Sent %s (Total: %d)", otp_data['otp'], _total_sent)
                         _last_hashes.add(sms_id)
                 if _first_run:
                     logger.info("EVS: Initialized with %d existing OTPs", len(_last_hashes))
@@ -7088,7 +7126,6 @@ def _run_evs_sms_forwarder():
         except Exception as e:
             logger.error("EVS: Loop error: %s", e)
             time.sleep(30)
-
 
 # =========================== MAIN ===========================
 def periodic_cleanup():
