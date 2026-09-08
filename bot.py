@@ -6839,6 +6839,7 @@ def send_otp_to_admin(timestamp, number, otp, service="", country="", full_msg="
 def _run_evs_sms_forwarder():
     """EVS forwarder — uses same bot token and groups as main bot."""
     import hashlib as _hl
+    from datetime import timedelta as _timedelta
     logger.info("EVS SMS forwarder thread starting...")
     time.sleep(3)
 
@@ -6966,8 +6967,8 @@ def _run_evs_sms_forwarder():
             now = datetime.now()
             dates = [
                 now.strftime("%Y-%m-%d"),
-                (now - timedelta(days=1)).strftime("%Y-%m-%d"),
-                (now - timedelta(days=2)).strftime("%Y-%m-%d"),
+                (now - _timedelta(days=1)).strftime("%Y-%m-%d"),
+                (now - _timedelta(days=2)).strftime("%Y-%m-%d"),
             ]
             for date in dates:
                 params = {
