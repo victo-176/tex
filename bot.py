@@ -64,8 +64,15 @@ ALLOWED_SERVICES = {
     "stcpay", "unknown"
 }
 REFERRAL_REWARD = 0.001
-MIN_WITHDRAWAL = 1.0
+MIN_WITHDRAWAL_DEFAULT = 1.0
 MAX_WITHDRAWAL = 5.0
+
+def get_min_withdrawal():
+    """Minimum withdrawal amount, admin-adjustable via Settings."""
+    try:
+        return float(get_setting('min_withdrawal') or MIN_WITHDRAWAL_DEFAULT)
+    except (TypeError, ValueError):
+        return MIN_WITHDRAWAL_DEFAULT
 ADMIN_IDS = [ADMIN_ID, *EXTRA_ADMINS]
 # Default price credited to users per OTP received (admin-adjustable via Settings)
 DEFAULT_OTP_PRICE = float(os.getenv("OTP_PRICE", "0.006"))
@@ -773,7 +780,7 @@ def set_setting(key, value):
 def get_default_otp_price():
     """Global fallback price per OTP (defaults to the legacy $0.006)."""
     try:
-        val = float(get_setting('price_per_otp') or 0.006)
+        val = float(get_setting('otp_price') or 0.006)
     except (TypeError, ValueError):
         val = 0.006
     return val
@@ -4517,8 +4524,8 @@ def check_withdrawal_amount(user_id, amount):
     balance = user[10] if user and len(user) > 10 else 0.0
     if amount > balance:
         return f"❌ Insufficient balance. You have ${balance}."
-    if amount < MIN_WITHDRAWAL:
-        return f"❌ Minimum withdrawal is ${MIN_WITHDRAWAL:.2f}."
+    if amount < get_min_withdrawal():
+        return f"❌ Minimum withdrawal is ${get_min_withdrawal():.2f}."
     if amount > MAX_WITHDRAWAL:
         return f"❌ Maximum withdrawal is ${MAX_WITHDRAWAL:.2f}."
     return None
@@ -5386,13 +5393,14 @@ def handle_admin_callback(call, data, chat_id, msg_id):
         markup.add(ibtn("Cooldown", callback_data="admin_set_cooldown", style="primary", icon="wrench"))
         markup.add(ibtn("Price per OTP", callback_data="admin_set_otp_price", style="primary", icon="dollar"))
         markup.add(ibtn("Num per Request", callback_data="admin_set_num_req", style="primary", icon="phone"))
-        markup.add(ibtn(f"Price per OTP [${get_default_otp_price():.4g}]", callback_data="admin_set_otp_price", style="primary", icon="dollar"))
+        markup.add(ibtn(f"Price per OTP [${get_otp_price():.4g}]", callback_data="admin_set_otp_price", style="primary", icon="dollar"))
         markup.add(ibtn("Support Link", callback_data="admin_set_support", style="primary", icon="support"))
         markup.add(ibtn("Watermark", callback_data="admin_set_watermark", style="primary", icon="star"))
         markup.add(ibtn("Bot Link", callback_data="admin_set_botlink", style="primary", icon="link"))
         markup.add(ibtn("Force Subscribe", callback_data="admin_force_sub", style="primary", icon="lock"))
         markup.add(ibtn("Broadcast", callback_data="admin_broadcast", style="success", icon="announcement"))
         markup.add(ibtn(f"Real-time OTP [{rt_label}]", callback_data="admin_toggle_rt_otp", style=rt_style, icon="eye"))
+        markup.add(ibtn(f"Min Withdrawal [${get_min_withdrawal():.2f}]", callback_data="admin_set_min_withdrawal", style="primary", icon="dollar"))
         markup.add(ibtn("Maintenance", callback_data="admin_toggle_maintenance", style="danger", icon="wrench"))
         markup.add(ibtn("Back", callback_data="admin_panel", style="primary", icon="back"))
         bot.edit_message_text("⚙️ <b>Settings</b>", chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
@@ -5406,6 +5414,17 @@ def handle_admin_callback(call, data, chat_id, msg_id):
             f"{pe('dollar', '💰')} <b>Price per OTP</b>\n\n"
             f"Current: <code>${get_default_otp_price():.4g}</code>\n"
             f"Send the new default amount in USD (e.g. <code>0.01</code>):",
+            chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
+        return
+
+    if data == "admin_set_min_withdrawal":
+        set_state(chat_id, "set_min_withdrawal")
+        markup = types.InlineKeyboardMarkup()
+        markup.add(ibtn("Cancel", callback_data="admin_settings", style="danger", icon="back"))
+        bot.edit_message_text(
+            f"{pe('dollar', '💰')} <b>Minimum Withdrawal</b>\n\n"
+            f"Current: <code>${get_min_withdrawal():.2f}</code>\n"
+            f"Send the new minimum withdrawal in USD (e.g. <code>1.00</code>):",
             chat_id, msg_id, parse_mode="HTML", reply_markup=markup)
         return
 
@@ -6477,10 +6496,25 @@ def set_otp_price_handler(message):
         val = round(float(message.text.strip().replace("$", "")), 4)
         if val < 0:
             raise ValueError
-        set_setting('price_per_otp', str(val))
+        set_otp_price(val)
         bot.reply_to(message, f"{pe('checkmark', '✅')} Price per OTP set to ${val:.4g}.", parse_mode="HTML")
     except (ValueError, TypeError):
         bot.reply_to(message, "❌ Invalid number. Send an amount like <code>0.01</code>", parse_mode="HTML")
+        return
+    clear_state(message)
+
+@bot.message_handler(func=lambda msg: get_state(msg) == "set_min_withdrawal" and is_admin(msg.from_user.id))
+def set_min_withdrawal_handler(message):
+    if message.text and message.text.strip().startswith("/"):
+        return
+    try:
+        val = round(float(message.text.strip().replace("$", "")), 2)
+        if val < 0:
+            raise ValueError
+        set_setting("min_withdrawal", str(val))
+        bot.reply_to(message, f"{pe('checkmark', '✅')} Minimum withdrawal set to ${val:.2f}.", parse_mode="HTML")
+    except (ValueError, TypeError):
+        bot.reply_to(message, "❌ Invalid number. Send an amount like <code>1.00</code>", parse_mode="HTML")
         return
     clear_state(message)
 
@@ -6493,17 +6527,6 @@ def set_botlink_handler(message):
 
 
 @bot.message_handler(func=lambda msg: get_state(msg) == "set_otp_price" and is_admin(msg.from_user.id))
-def set_otp_price_handler(message):
-    try:
-        val = float(message.text.strip().replace("$", "").replace(",", "."))
-        if val < 0:
-            raise ValueError
-        set_otp_price(val)
-        bot.reply_to(message, f"✅ Price per OTP set to ${val:.4f}.", parse_mode="HTML")
-    except (ValueError, AttributeError):
-        bot.reply_to(message, "❌ Invalid price. Send a number (e.g. 0.01).", parse_mode="HTML")
-    clear_state(message)
-
 @bot.message_handler(func=lambda msg: get_state(msg) == "set_cooldown" and is_admin(msg.from_user.id))
 def set_cooldown_handler(message):
     try:
