@@ -1,1 +1,0 @@
-# Panel modules package
