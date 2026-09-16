@@ -570,17 +570,28 @@ def init_db():
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('num_per_request', '1')")
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('otp_price', '0.006')")
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('maintenance', '0')")
-        # Ensure no duplicate numbers across users (migration for existing DBs)
+        # Ensure no duplicate numbers across users (migration for existing DBs).
+        # Users may hold several numbers comma-separated (num_per_request > 1),
+        # so de-duplicate per individual number, never nuking a whole list.
         try:
             c.execute("SELECT user_id, assigned_number FROM users WHERE assigned_number IS NOT NULL AND assigned_number != ''")
             rows = c.fetchall()
             seen = {}
-            for uid, num in rows:
-                if num in seen:
-                    c.execute("UPDATE users SET assigned_number=NULL WHERE user_id=?", (uid,))
-                    logger.info(f"Cleared duplicate number {num} from user {uid} (already assigned to {seen[num]})")
-                else:
-                    seen[num] = uid
+            for uid, stored in rows:
+                if not stored:
+                    continue
+                parts = [p for p in str(stored).split(',') if p]
+                kept = []
+                changed = False
+                for num in parts:
+                    if num in seen:
+                        logger.info(f"Removed duplicate number {num} from user {uid} (already assigned to {seen[num]})")
+                        changed = True
+                    else:
+                        seen[num] = uid
+                        kept.append(num)
+                if changed:
+                    c.execute("UPDATE users SET assigned_number=? WHERE user_id=?", (",".join(kept) if kept else None, uid))
         except Exception:
             pass
 
@@ -935,7 +946,12 @@ def get_all_users():
     return [r[0] for r in rows]
 
 def get_user_by_number(number):
-    """Find user by assigned number - try multiple formats for matching."""
+    """Find user by assigned number - try multiple formats for matching.
+
+    A user can hold several numbers at once (num_per_request > 1); these are
+    stored comma-separated in users.assigned_number, so every candidate value
+    is split on commas before matching.
+    """
     if not number:
         return None
     clean = re.sub(r'\D', '', str(number))  # digits only
@@ -948,38 +964,40 @@ def get_user_by_number(number):
         logger.debug(f"get_user_by_number: searching '{clean}' in {[(u,n) for u,n in all_nums]}")
     else:
         logger.warning(f"get_user_by_number: NO users have assigned numbers! Cannot match '{clean}'")
-    # Try exact match first
+
+    def _iter_assigned():
+        """Yield (user_id, individual_number) for every number a user holds."""
+        for uid, stored in all_nums:
+            if not stored:
+                continue
+            for part in str(stored).split(','):
+                part_clean = re.sub(r'\D', '', str(part))
+                if part_clean:
+                    yield uid, part_clean
+
+    assigned_pairs = list(_iter_assigned())
+
+    # Try exact match first (covers both single numbers and comma lists)
     c.execute("SELECT user_id FROM users WHERE assigned_number=?", (clean,))
     row = c.fetchone()
     if row:
         conn.close()
         return row[0]
-    # Try without leading zeros
-    c.execute("SELECT user_id FROM users WHERE assigned_number=?", (clean.lstrip('0'),))
-    row = c.fetchone()
-    if row:
-        conn.close()
-        return row[0]
-    # Try with + prefix
-    c.execute("SELECT user_id FROM users WHERE assigned_number=?", ('+' + clean,))
-    row = c.fetchone()
-    if row:
-        conn.close()
-        return row[0]
-    # Try fuzzy: get all assigned numbers and check if any is a suffix/prefix match
-    c.execute("SELECT user_id, assigned_number FROM users WHERE assigned_number IS NOT NULL AND assigned_number != ''")
-    for uid, anum in c.fetchall():
-        clean_anum = re.sub(r'\D', '', str(anum))
-        if not clean_anum:
-            continue
-        # Check if one contains the other (for country code differences)
-        if clean.endswith(clean_anum) or clean_anum.endswith(clean):
+    # Try without leading zeros / with + prefix / suffix-prefix fuzzy match
+    # against every individual number a user holds.
+    for uid, anum in assigned_pairs:
+        if anum == clean.lstrip('0') or anum == ('+' + clean):
             conn.close()
             return uid
-        if clean.startswith(clean_anum) or clean_anum.startswith(clean):
+    for uid, anum in assigned_pairs:
+        # Check if one contains the other (for country code differences)
+        if clean.endswith(anum) or anum.endswith(clean):
+            conn.close()
+            return uid
+        if clean.startswith(anum) or anum.startswith(clean):
             # Only match if the remaining part is at least 5 digits
-            diff = abs(len(clean) - len(clean_anum))
-            if diff >= 0 and min(len(clean), len(clean_anum)) >= 5:
+            diff = abs(len(clean) - len(anum))
+            if diff >= 0 and min(len(clean), len(anum)) >= 5:
                 conn.close()
                 return uid
     conn.close()
@@ -1039,14 +1057,27 @@ def assign_number_to_user(user_id, number):
     with _db_lock:
         conn = _get_conn()
         c = conn.cursor()
-        # Check if number is already taken by another user
-        c.execute("SELECT user_id FROM users WHERE assigned_number=? AND user_id!=?", (number, user_id))
-        existing = c.fetchone()
-        if existing:
-            logger.warning(f"Number {number} already taken by user {existing[0]}, rejecting assignment to {user_id}")
-            conn.close()
-            return False
-        c.execute("UPDATE users SET assigned_number=? WHERE user_id=?", (number, user_id))
+        # Check if number is already taken by another user (match any number
+        # inside another user's comma-separated list)
+        c.execute("SELECT user_id, assigned_number FROM users WHERE assigned_number IS NOT NULL AND assigned_number != ''")
+        for other_uid, stored in c.fetchall():
+            if other_uid == user_id or not stored:
+                continue
+            other_nums = {re.sub(r'\D', '', p) for p in str(stored).split(',') if re.sub(r'\D', '', p)}
+            if re.sub(r'\D', '', str(number)) in other_nums:
+                logger.warning(f"Number {number} already taken by user {other_uid}, rejecting assignment to {user_id}")
+                conn.close()
+                return False
+        # Merge into the user's comma-separated list instead of overwriting it
+        c.execute("SELECT assigned_number FROM users WHERE user_id=?", (user_id,))
+        row = c.fetchone()
+        current_parts = []
+        if row and row[0]:
+            current_parts = [p for p in str(row[0]).split(',') if p]
+        num_str = str(number)
+        if num_str not in current_parts:
+            current_parts.append(num_str)
+        c.execute("UPDATE users SET assigned_number=? WHERE user_id=?", (",".join(current_parts), user_id))
         conn.commit()
         conn.close()
         log_user_activity(user_id, "number_assigned", f"Number {number} assigned")
@@ -1060,8 +1091,16 @@ def release_number(number):
     with _db_lock:
         conn = _get_conn()
         c = conn.cursor()
-        # Remove from user assignment
-        c.execute("UPDATE users SET assigned_number=NULL WHERE assigned_number=?", (number,))
+        # Remove from user assignment. A user may hold several numbers
+        # comma-separated (num_per_request > 1) — drop only this one.
+        target = str(number)
+        c.execute("SELECT user_id, assigned_number FROM users WHERE assigned_number IS NOT NULL AND assigned_number != ''")
+        for uid, stored in c.fetchall():
+            if not stored:
+                continue
+            parts = [p for p in str(stored).split(',') if p and p != target]
+            if parts != str(stored).split(','):
+                c.execute("UPDATE users SET assigned_number=? WHERE user_id=?", (",".join(parts) if parts else None, uid))
         # Delete from combo stock entirely
         c.execute("SELECT id, numbers FROM combos")
         for row in c.fetchall():
@@ -4820,11 +4859,13 @@ def fetch_number_logic(chat_id, app_name, country_key, message_id):
             numbers.extend(json.loads(r[0]))
         except Exception:
             pass
-    used = []
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT assigned_number FROM users WHERE assigned_number IS NOT NULL AND assigned_number != ''")
-    used = [r[0] for r in c.fetchall()]
+    used = []
+    # Users may hold several numbers comma-separated (num_per_request > 1)
+    for (stored,) in c.fetchall():
+        used.extend(p for p in str(stored).split(',') if p)
     conn.close()
     available = [n for n in numbers if n not in used]
     if not available:
@@ -4850,14 +4891,11 @@ def fetch_number_logic(chat_id, app_name, country_key, message_id):
     assigned_numbers = random.sample(available, min(num_per_req, len(available)))
     assigned = assigned_numbers[0]  # Primary number for display
 
-    # Save all assigned numbers (store as comma-separated in assigned_number)
-    if len(assigned_numbers) > 1:
-        save_user(chat_id, country_code=country_key, assigned_number=",".join(assigned_numbers))
-        for num in assigned_numbers:
-            assign_number_to_user(chat_id, num)
-    else:
-        assign_number_to_user(chat_id, assigned)
-        save_user(chat_id, country_code=country_key, assigned_number=assigned)
+    # Store all assigned numbers comma-separated in assigned_number;
+    # assign_number_to_user merges into that list instead of overwriting it
+    save_user(chat_id, country_code=country_key, assigned_number=",".join(assigned_numbers))
+    for num in assigned_numbers:
+        assign_number_to_user(chat_id, num)
     try:
         log_user_activity(chat_id, "number_fetched", f"{app_name}/{country_key}")
     except Exception:
